@@ -11,18 +11,21 @@ import datetime as dt
 
 st.set_page_config(page_title="Amazon FBA Inventory", layout="wide")
 
-# --- СЛОВНИК ПЕРЕКЛАДІВ (ВИПРАВЛЕНИЙ) ---
+# --- СЛОВНИК ПЕРЕКЛАДІВ ---
 translations = {
     "UA": {
-        "title": "📦 Amazon FBA Склад + AI",
+        "title": "📦 Amazon FBA Ultimate BI",
         "update_btn": "🔄 Оновити дані",
         "sidebar_title": "🔍 Фільтри",
         "date_label": "📅 Дата:",
         "store_label": "🏪 Магазин:",
         "all_stores": "Всі",
+        # НАЗВИ ВКЛАДОК
         "tab1": "📊 Головний Дашборд",
-        "tab2": "📋 Детальна Таблиця",
-        "tab3": "🧠 AI Прогноз (beta)",
+        "tab2": "📋 Таблица і Excel",
+        "tab3": "📈 Історія та Тренди", # <-- ПОВЕРНУЛИ
+        "tab4": "🧠 AI Прогноз (Beta)", # <-- ЗАЛИШИЛИ
+        
         "summary": "Зведення за",
         "total_sku": "Всього SKU",
         "total_avail": "Всього Доступно",
@@ -31,30 +34,41 @@ translations = {
         "top_chart": "🏆 Top 15 товарів по залишках",
         "table_header": "📋 Повний список інвентарю",
         "download_excel": "📥 Завантажити Excel",
+        
+        # ТРЕНДИ (Tab 3)
+        "chart_history": "📈 Загальна динаміка стоку (Всі товари)",
+        "chart_sku": "🔍 Історія конкретного SKU",
+        "select_sku": "Виберіть SKU:",
+        
+        # AI (Tab 4)
         "ai_header": "🧠 AI Прогноз залишків (Machine Learning)",
         "ai_select": "Оберіть SKU для прогнозу:",
         "ai_days": "На скільки днів прогнозувати?",
         "ai_result_date": "📅 Очікувана дата обнулення стоку:",
         "ai_result_days": "Днів до sold-out:",
         "ai_error": "Недостатньо даних для прогнозу (треба мінімум 3 дні історії)",
+        "ai_ok": "✅ Запасів вистачить більше ніж на обраний період",
+
         "col_sku": "SKU",
         "col_name": "Назва товару",
         "col_avail": "Доступно",
         "col_inbound": "Їде (Inbound)",
         "col_reserved": "Резерв",
         "col_days": "Днів запасу",
-        "footer_date": "📅 Останнє оновлення:"  # <--- ПОВЕРНУЛИ ЦЕЙ РЯДОК
+        "footer_date": "📅 Останнє оновлення:"
     },
     "EN": {
-        "title": "📦 Amazon FBA Inventory + AI",
+        "title": "📦 Amazon FBA Ultimate BI",
         "update_btn": "🔄 Refresh Data",
         "sidebar_title": "🔍 Filters",
         "date_label": "📅 Date:",
         "store_label": "🏪 Store:",
         "all_stores": "All",
         "tab1": "📊 Main Dashboard",
-        "tab2": "📋 Detailed Table",
-        "tab3": "🧠 AI Forecast (beta)",
+        "tab2": "📋 Table & Excel",
+        "tab3": "📈 History & Trends",
+        "tab4": "🧠 AI Forecast (Beta)",
+        
         "summary": "Summary for",
         "total_sku": "Total SKU",
         "total_avail": "Total Available",
@@ -63,30 +77,39 @@ translations = {
         "top_chart": "🏆 Top 15 SKU by Availability",
         "table_header": "📋 Full Inventory List",
         "download_excel": "📥 Download Excel",
+        
+        "chart_history": "📈 Total Stock Dynamics",
+        "chart_sku": "🔍 Specific SKU History",
+        "select_sku": "Select SKU:",
+        
         "ai_header": "🧠 AI Inventory Forecast (Machine Learning)",
         "ai_select": "Select SKU to forecast:",
         "ai_days": "Forecast horizon (days):",
         "ai_result_date": "📅 Expected Sold-out Date:",
         "ai_result_days": "Days until sold-out:",
         "ai_error": "Not enough data for forecast (need min 3 days history)",
+        "ai_ok": "✅ Stock sufficient for selected period",
+
         "col_sku": "SKU",
         "col_name": "Product Name",
         "col_avail": "Available",
         "col_inbound": "Inbound",
         "col_reserved": "Reserved",
         "col_days": "Days of Supply",
-        "footer_date": "📅 Last update:" # <--- ПОВЕРНУЛИ ЦЕЙ РЯДОК
+        "footer_date": "📅 Last update:"
     },
     "RU": {
-        "title": "📦 Amazon FBA Склад + AI",
+        "title": "📦 Amazon FBA Ultimate BI",
         "update_btn": "🔄 Обновить данные",
         "sidebar_title": "🔍 Фильтры",
         "date_label": "📅 Дата:",
         "store_label": "🏪 Магазин:",
         "all_stores": "Все",
         "tab1": "📊 Главный Дашборд",
-        "tab2": "📋 Таблица",
-        "tab3": "🧠 AI Прогноз (beta)",
+        "tab2": "📋 Таблица и Excel",
+        "tab3": "📈 История и Тренды",
+        "tab4": "🧠 AI Прогноз (Beta)",
+        
         "summary": "Сводка за",
         "total_sku": "Всего SKU",
         "total_avail": "Всего Доступно",
@@ -95,19 +118,26 @@ translations = {
         "top_chart": "🏆 Top 15 товаров по остаткам",
         "table_header": "📋 Полный список инвентаря",
         "download_excel": "📥 Скачать Excel",
+        
+        "chart_history": "📈 Общая динамика стока (Все товары)",
+        "chart_sku": "🔍 История конкретного SKU",
+        "select_sku": "Выберите SKU:",
+        
         "ai_header": "🧠 AI Прогноз остатков (Machine Learning)",
         "ai_select": "Выберите SKU для прогноза:",
         "ai_days": "На сколько дней прогнозировать?",
         "ai_result_date": "📅 Ожидаемая дата обнуления:",
         "ai_result_days": "Дней до sold-out:",
         "ai_error": "Недостаточно данных для прогноза (нужно минимум 3 дня)",
+        "ai_ok": "✅ Запасов хватит больше чем на выбранный период",
+
         "col_sku": "SKU",
         "col_name": "Название товара",
         "col_avail": "Доступно",
         "col_inbound": "В пути",
         "col_reserved": "Резерв",
         "col_days": "Дней запаса",
-        "footer_date": "📅 Последнее обновление:" # <--- ПОВЕРНУЛИ ЦЕЙ РЯДОК
+        "footer_date": "📅 Последнее обновление:"
     }
 }
 
@@ -168,8 +198,8 @@ if selected_store != t["all_stores"]:
     if not df_prev.empty:
         df_prev = df_prev[df_prev['Store Name'] == selected_store]
 
-# --- TABS ---
-tab1, tab2, tab3 = st.tabs([t["tab1"], t["tab2"], t["tab3"]])
+# --- 4 TABS ---
+tab1, tab2, tab3, tab4 = st.tabs([t["tab1"], t["tab2"], t["tab3"], t["tab4"]])
 
 # === TAB 1: DASHBOARD ===
 with tab1:
@@ -219,25 +249,61 @@ with tab2:
     show_df = show_df[existing_cols].rename(columns=display_map)
     st.dataframe(show_df.style.applymap(highlight_stock, subset=[t['col_avail']]), use_container_width=True, height=800)
 
-# === TAB 3: AI FORECAST ===
+# === TAB 3: HISTORY & TRENDS ===
 with tab3:
+    col_hist1, col_hist2 = st.columns([2, 1])
+    
+    with col_hist1:
+        st.subheader(t["chart_history"])
+        
+        if selected_store != t["all_stores"]:
+            df_history = df[df['Store Name'] == selected_store]
+        else:
+            df_history = df
+
+        daily_totals = df_history.groupby('date').agg({
+            'Available': 'sum',
+            'Inbound': 'sum',
+            'FBA Reserved Quantity': 'sum'
+        }).reset_index().sort_values('date')
+
+        rename_dict = {'Available': t['col_avail'], 'Inbound': t['col_inbound']}
+        fig_line = px.line(daily_totals, x='date', y=['Available', 'Inbound'], markers=True, title=t["chart_history"])
+        new_names = {k: v for k, v in rename_dict.items()}
+        fig_line.for_each_trace(lambda tr: tr.update(name = new_names.get(tr.name, tr.name)))
+        st.plotly_chart(fig_line, use_container_width=True)
+
+    with col_hist2:
+        st.subheader(t["chart_sku"])
+        skus = sorted(df['SKU'].unique())
+        selected_sku_hist = st.selectbox(t["select_sku"], skus, key="hist_select") # Унікальний ключ
+
+        sku_history = df[df['SKU'] == selected_sku_hist][['date', 'Available', 'Inbound', 'Total Quantity']]
+        sku_history = sku_history.groupby('date').first().reset_index().sort_values('date')
+
+        if not sku_history.empty:
+            st.metric(f"{t['col_avail']}", int(sku_history.iloc[-1]['Available']))
+            fig_sku = px.area(sku_history, x='date', y='Available', title=f"{selected_sku_hist}")
+            st.plotly_chart(fig_sku, use_container_width=True)
+        else:
+            st.info("No Data")
+
+# === TAB 4: AI FORECAST ===
+with tab4:
     st.subheader(t["ai_header"])
     
-    # 1. Вибір SKU
     skus = sorted(df['SKU'].unique())
     col_ai1, col_ai2 = st.columns([1, 1])
     with col_ai1:
-        target_sku = st.selectbox(t["ai_select"], skus)
+        target_sku = st.selectbox(t["ai_select"], skus, key="ai_select") # Унікальний ключ
     with col_ai2:
         forecast_days = st.slider(t["ai_days"], 7, 90, 30)
 
-    # 2. Підготовка даних для ML
     sku_data = df[df['SKU'] == target_sku].copy()
     sku_data = sku_data.sort_values('date')
     sku_data['date_ordinal'] = sku_data['created_at'].map(dt.datetime.toordinal)
 
     if len(sku_data) >= 3:
-        # --- MACHINE LEARNING START ---
         X = sku_data[['date_ordinal']]
         y = sku_data['Available']
 
@@ -251,12 +317,7 @@ with tab3:
         predictions = model.predict(future_ordinal)
         predictions = [max(0, int(p)) for p in predictions]
         
-        df_forecast = pd.DataFrame({
-            'date': future_dates,
-            'Predicted_Available': predictions,
-            'Type': 'Forecast'
-        })
-        # --- MACHINE LEARNING END ---
+        df_forecast = pd.DataFrame({'date': future_dates, 'Predicted_Available': predictions, 'Type': 'Forecast'})
 
         sold_out_date = None
         days_left = None
@@ -270,12 +331,12 @@ with tab3:
             col_res1.error(f"{t['ai_result_date']} **{sold_out_date}**")
             col_res2.metric(t['ai_result_days'], f"{days_left} дн.")
         else:
-            col_res1.success(f"✅ Запасів вистачить більше ніж на {forecast_days} днів")
+            col_res1.success(t["ai_ok"])
 
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=sku_data['date'], y=sku_data['Available'], mode='lines+markers', name='Історія', line=dict(color='blue')))
-        fig.add_trace(go.Scatter(x=df_forecast['date'], y=df_forecast['Predicted_Available'], mode='lines', name='AI Прогноз', line=dict(color='red', dash='dash')))
-        fig.update_layout(title=f"AI Прогноз для {target_sku}", xaxis_title="Дата", yaxis_title="Кількість")
+        fig.add_trace(go.Scatter(x=sku_data['date'], y=sku_data['Available'], mode='lines+markers', name='History', line=dict(color='blue')))
+        fig.add_trace(go.Scatter(x=df_forecast['date'], y=df_forecast['Predicted_Available'], mode='lines', name='AI Forecast', line=dict(color='red', dash='dash')))
+        fig.update_layout(title=f"AI Forecast: {target_sku}", xaxis_title="Date", yaxis_title="Qty")
         st.plotly_chart(fig, use_container_width=True)
         
     else:
