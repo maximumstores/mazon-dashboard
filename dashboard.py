@@ -3,15 +3,15 @@ import pandas as pd
 import psycopg2
 import os
 import plotly.express as px
-import plotly.graph_objects as go # Для складних графіків AI
+import plotly.graph_objects as go
 import io
-from sklearn.linear_model import LinearRegression # МОЗОК Штучного Інтелекту
+from sklearn.linear_model import LinearRegression
 import numpy as np
 import datetime as dt
 
 st.set_page_config(page_title="Amazon FBA Inventory", layout="wide")
 
-# --- СЛОВНИК ПЕРЕКЛАДІВ ---
+# --- СЛОВНИК ПЕРЕКЛАДІВ (ВИПРАВЛЕНИЙ) ---
 translations = {
     "UA": {
         "title": "📦 Amazon FBA Склад + AI",
@@ -34,7 +34,6 @@ translations = {
         "ai_header": "🧠 AI Прогноз залишків (Machine Learning)",
         "ai_select": "Оберіть SKU для прогнозу:",
         "ai_days": "На скільки днів прогнозувати?",
-        "ai_btn": "🔮 Спрогнозувати майбутнє",
         "ai_result_date": "📅 Очікувана дата обнулення стоку:",
         "ai_result_days": "Днів до sold-out:",
         "ai_error": "Недостатньо даних для прогнозу (треба мінімум 3 дні історії)",
@@ -43,7 +42,8 @@ translations = {
         "col_avail": "Доступно",
         "col_inbound": "Їде (Inbound)",
         "col_reserved": "Резерв",
-        "col_days": "Днів запасу"
+        "col_days": "Днів запасу",
+        "footer_date": "📅 Останнє оновлення:"  # <--- ПОВЕРНУЛИ ЦЕЙ РЯДОК
     },
     "EN": {
         "title": "📦 Amazon FBA Inventory + AI",
@@ -66,7 +66,6 @@ translations = {
         "ai_header": "🧠 AI Inventory Forecast (Machine Learning)",
         "ai_select": "Select SKU to forecast:",
         "ai_days": "Forecast horizon (days):",
-        "ai_btn": "🔮 Predict Future",
         "ai_result_date": "📅 Expected Sold-out Date:",
         "ai_result_days": "Days until sold-out:",
         "ai_error": "Not enough data for forecast (need min 3 days history)",
@@ -75,7 +74,8 @@ translations = {
         "col_avail": "Available",
         "col_inbound": "Inbound",
         "col_reserved": "Reserved",
-        "col_days": "Days of Supply"
+        "col_days": "Days of Supply",
+        "footer_date": "📅 Last update:" # <--- ПОВЕРНУЛИ ЦЕЙ РЯДОК
     },
     "RU": {
         "title": "📦 Amazon FBA Склад + AI",
@@ -98,7 +98,6 @@ translations = {
         "ai_header": "🧠 AI Прогноз остатков (Machine Learning)",
         "ai_select": "Выберите SKU для прогноза:",
         "ai_days": "На сколько дней прогнозировать?",
-        "ai_btn": "🔮 Спрогнозировать будущее",
         "ai_result_date": "📅 Ожидаемая дата обнуления:",
         "ai_result_days": "Дней до sold-out:",
         "ai_error": "Недостаточно данных для прогноза (нужно минимум 3 дня)",
@@ -107,7 +106,8 @@ translations = {
         "col_avail": "Доступно",
         "col_inbound": "В пути",
         "col_reserved": "Резерв",
-        "col_days": "Дней запаса"
+        "col_days": "Дней запаса",
+        "footer_date": "📅 Последнее обновление:" # <--- ПОВЕРНУЛИ ЦЕЙ РЯДОК
     }
 }
 
@@ -234,30 +234,23 @@ with tab3:
     # 2. Підготовка даних для ML
     sku_data = df[df['SKU'] == target_sku].copy()
     sku_data = sku_data.sort_values('date')
-    
-    # Machine Learning потребує чисел, а не дат. Перетворюємо дату в порядковий номер.
     sku_data['date_ordinal'] = sku_data['created_at'].map(dt.datetime.toordinal)
 
     if len(sku_data) >= 3:
         # --- MACHINE LEARNING START ---
-        X = sku_data[['date_ordinal']] # Вхідні дані (Час)
-        y = sku_data['Available']      # Ціль (Скільки товару)
+        X = sku_data[['date_ordinal']]
+        y = sku_data['Available']
 
         model = LinearRegression()
-        model.fit(X, y) # Тренуємо модель
+        model.fit(X, y)
 
-        # Створюємо майбутні дати
         last_date = sku_data['created_at'].max()
         future_dates = [last_date + dt.timedelta(days=x) for x in range(1, forecast_days + 1)]
         future_ordinal = np.array([d.toordinal() for d in future_dates]).reshape(-1, 1)
 
-        # Робимо прогноз
         predictions = model.predict(future_ordinal)
-        
-        # Захист від від'ємних значень (не може бути -5 товарів)
         predictions = [max(0, int(p)) for p in predictions]
         
-        # Збираємо прогноз в таблицю
         df_forecast = pd.DataFrame({
             'date': future_dates,
             'Predicted_Available': predictions,
@@ -265,17 +258,13 @@ with tab3:
         })
         # --- MACHINE LEARNING END ---
 
-        # 3. Аналіз Sold-out (Коли буде 0?)
         sold_out_date = None
         days_left = None
-        
-        # Шукаємо першу дату, де прогноз впав до 0
         zero_stock = df_forecast[df_forecast['Predicted_Available'] == 0]
         if not zero_stock.empty:
             sold_out_date = zero_stock.iloc[0]['date'].date()
             days_left = (sold_out_date - dt.date.today()).days
 
-        # Виводимо метрики "смерті" товару
         col_res1, col_res2 = st.columns(2)
         if sold_out_date:
             col_res1.error(f"{t['ai_result_date']} **{sold_out_date}**")
@@ -283,23 +272,9 @@ with tab3:
         else:
             col_res1.success(f"✅ Запасів вистачить більше ніж на {forecast_days} днів")
 
-        # 4. Графік: Історія (Синій) + Прогноз (Червоний пунктир)
         fig = go.Figure()
-
-        # Історія
-        fig.add_trace(go.Scatter(
-            x=sku_data['date'], y=sku_data['Available'],
-            mode='lines+markers', name='Історія',
-            line=dict(color='blue')
-        ))
-
-        # Прогноз
-        fig.add_trace(go.Scatter(
-            x=df_forecast['date'], y=df_forecast['Predicted_Available'],
-            mode='lines', name='AI Прогноз',
-            line=dict(color='red', dash='dash') # Пунктирна лінія
-        ))
-
+        fig.add_trace(go.Scatter(x=sku_data['date'], y=sku_data['Available'], mode='lines+markers', name='Історія', line=dict(color='blue')))
+        fig.add_trace(go.Scatter(x=df_forecast['date'], y=df_forecast['Predicted_Available'], mode='lines', name='AI Прогноз', line=dict(color='red', dash='dash')))
         fig.update_layout(title=f"AI Прогноз для {target_sku}", xaxis_title="Дата", yaxis_title="Кількість")
         st.plotly_chart(fig, use_container_width=True)
         
