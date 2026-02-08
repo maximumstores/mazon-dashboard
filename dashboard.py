@@ -27,6 +27,7 @@ translations = {
         "tab3": "🐢 Здоров'я складу (Aging)",
         "tab4": "🧠 AI Прогноз",
         "tab5": "📋 Таблиця даних",
+        "tab6": "🛒 Замовлення",
 
         # МЕТРИКИ
         "total_sku": "Всього SKU",
@@ -74,6 +75,7 @@ translations = {
         "tab3": "🐢 Inventory Health",
         "tab4": "🧠 AI Forecast",
         "tab5": "📋 Data Table",
+        "tab6": "🛒 Orders",
 
         "total_sku": "Total SKU",
         "total_avail": "Total Units",
@@ -118,6 +120,7 @@ translations = {
         "tab3": "🐢 Здоровье склада",
         "tab4": "🧠 AI Прогноз",
         "tab5": "📋 Таблица",
+        "tab6": "🛒 Заказы",
 
         "total_sku": "Всего SKU",
         "total_avail": "Штук на складе",
@@ -171,6 +174,34 @@ def load_data():
         return df
     except Exception as e:
         st.error(f"Помилка підключення до бази даних: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60)
+def load_orders():
+    """Завантаження замовлень з БД"""
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        
+        # Беремо тільки останнє завантаження (щоб не було дублів)
+        df = pd.read_sql("""
+            SELECT * FROM orders 
+            WHERE created_at = (SELECT MAX(created_at) FROM orders)
+        """, conn)
+        conn.close()
+        
+        # Конвертуємо типи даних
+        df['Order Date'] = pd.to_datetime(df['Order Date'], errors='coerce')
+        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
+        df['Item Price'] = pd.to_numeric(df['Item Price'], errors='coerce').fillna(0)
+        df['Item Tax'] = pd.to_numeric(df['Item Tax'], errors='coerce').fillna(0)
+        df['Shipping Price'] = pd.to_numeric(df['Shipping Price'], errors='coerce').fillna(0)
+        
+        # Загальна сума замовлення
+        df['Total Price'] = df['Item Price'] + df['Item Tax'] + df['Shipping Price']
+        
+        return df
+    except Exception as e:
+        st.error(f"Помилка завантаження orders: {e}")
         return pd.DataFrame()
 
 if st.button(t["update_btn"]):
@@ -233,7 +264,9 @@ if df_filtered.empty:
     st.info("Дані за вибраними фільтрами відсутні.")
 else:
     # --- TABS ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([t["tab1"], t["tab2"], t["tab3"], t["tab4"], t["tab5"]])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        t["tab1"], t["tab2"], t["tab3"], t["tab4"], t["tab5"], t["tab6"]
+    ])
 
     # === TAB 1: OVERVIEW ===
     with tab1:
@@ -396,6 +429,217 @@ else:
         st.download_button(label=t["download_excel"], data=buffer, file_name=f"inventory_{selected_date}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         
         st.dataframe(df_filtered, use_container_width=True)
+
+    # === TAB 6: ORDERS ANALYTICS ===
+    with tab6:
+        st.header("🛒 Orders Analytics")
+        
+        df_orders = load_orders()
+        
+        if df_orders.empty:
+            st.warning("⚠️ Дані про замовлення відсутні. Запустіть amazon_orders_loader.py")
+        else:
+            # Фільтр по датам
+            st.sidebar.markdown("---")
+            st.sidebar.subheader("🛒 Orders Filters")
+            
+            min_date = df_orders['Order Date'].min().date()
+            max_date = df_orders['Order Date'].max().date()
+            
+            date_range = st.sidebar.date_input(
+                "📅 Date Range:",
+                value=(max_date - dt.timedelta(days=7), max_date),
+                min_value=min_date,
+                max_value=max_date
+            )
+            
+            if len(date_range) == 2:
+                start_date, end_date = date_range
+                df_orders_filtered = df_orders[
+                    (df_orders['Order Date'].dt.date >= start_date) &
+                    (df_orders['Order Date'].dt.date <= end_date)
+                ]
+            else:
+                df_orders_filtered = df_orders
+            
+            # === KPI METRICS ===
+            st.subheader("📊 Key Metrics")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            total_orders = df_orders_filtered['Order ID'].nunique()
+            total_items = df_orders_filtered['Quantity'].sum()
+            total_revenue = df_orders_filtered['Total Price'].sum()
+            avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
+            
+            col1.metric("📦 Total Orders", f"{total_orders:,}")
+            col2.metric("📦 Total Items", f"{int(total_items):,}")
+            col3.metric("💰 Total Revenue", f"${total_revenue:,.2f}")
+            col4.metric("💵 Avg Order Value", f"${avg_order_value:.2f}")
+            
+            st.markdown("---")
+            
+            # === ГРАФІКИ ===
+            chart_col1, chart_col2 = st.columns(2)
+            
+            with chart_col1:
+                st.subheader("📈 Orders per Day")
+                
+                orders_per_day = df_orders_filtered.groupby(
+                    df_orders_filtered['Order Date'].dt.date
+                ).agg({
+                    'Order ID': 'nunique',
+                    'Total Price': 'sum'
+                }).reset_index()
+                orders_per_day.columns = ['Date', 'Orders', 'Revenue']
+                
+                fig_trend = go.Figure()
+                fig_trend.add_trace(go.Scatter(
+                    x=orders_per_day['Date'],
+                    y=orders_per_day['Orders'],
+                    mode='lines+markers',
+                    name='Orders',
+                    line=dict(color='blue', width=2)
+                ))
+                fig_trend.update_layout(
+                    xaxis_title="Date",
+                    yaxis_title="Number of Orders",
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig_trend, use_container_width=True)
+            
+            with chart_col2:
+                st.subheader("💰 Revenue per Day")
+                
+                fig_revenue = go.Figure()
+                fig_revenue.add_trace(go.Bar(
+                    x=orders_per_day['Date'],
+                    y=orders_per_day['Revenue'],
+                    name='Revenue',
+                    marker_color='green'
+                ))
+                fig_revenue.update_layout(
+                    xaxis_title="Date",
+                    yaxis_title="Revenue ($)",
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig_revenue, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # === TOP SKU ===
+            top_col1, top_col2 = st.columns(2)
+            
+            with top_col1:
+                st.subheader("🏆 Top 10 SKU by Orders")
+                
+                top_sku_orders = df_orders_filtered.groupby('SKU').agg({
+                    'Order ID': 'count',
+                    'Quantity': 'sum'
+                }).reset_index()
+                top_sku_orders.columns = ['SKU', 'Order Count', 'Quantity']
+                top_sku_orders = top_sku_orders.sort_values('Order Count', ascending=False).head(10)
+                
+                fig_top_orders = px.bar(
+                    top_sku_orders,
+                    x='Order Count',
+                    y='SKU',
+                    orientation='h',
+                    text='Order Count',
+                    title='',
+                    color='Order Count',
+                    color_continuous_scale='Blues'
+                )
+                fig_top_orders.update_layout(yaxis={'categoryorder': 'total ascending'})
+                st.plotly_chart(fig_top_orders, use_container_width=True)
+            
+            with top_col2:
+                st.subheader("💰 Top 10 SKU by Revenue")
+                
+                top_sku_revenue = df_orders_filtered.groupby('SKU').agg({
+                    'Total Price': 'sum',
+                    'Quantity': 'sum'
+                }).reset_index()
+                top_sku_revenue.columns = ['SKU', 'Revenue', 'Quantity']
+                top_sku_revenue = top_sku_revenue.sort_values('Revenue', ascending=False).head(10)
+                
+                fig_top_revenue = px.bar(
+                    top_sku_revenue,
+                    x='Revenue',
+                    y='SKU',
+                    orientation='h',
+                    text='Revenue',
+                    title='',
+                    color='Revenue',
+                    color_continuous_scale='Greens'
+                )
+                fig_top_revenue.update_traces(texttemplate='$%{text:.2f}')
+                fig_top_revenue.update_layout(yaxis={'categoryorder': 'total ascending'})
+                st.plotly_chart(fig_top_revenue, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # === ORDERS BY STATUS ===
+            st.subheader("📊 Orders by Status")
+            
+            status_counts = df_orders_filtered.groupby('Order Status').agg({
+                'Order ID': 'nunique'
+            }).reset_index()
+            status_counts.columns = ['Status', 'Orders']
+            
+            fig_status = px.pie(
+                status_counts,
+                values='Orders',
+                names='Status',
+                hole=0.4,
+                title='Distribution by Order Status'
+            )
+            st.plotly_chart(fig_status, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # === DETAILED TABLE ===
+            st.subheader("📋 Orders Details")
+            
+            # Фільтр по SKU
+            unique_skus = ['All'] + sorted(df_orders_filtered['SKU'].unique().tolist())
+            selected_sku = st.selectbox("Filter by SKU:", unique_skus)
+            
+            if selected_sku != 'All':
+                df_display = df_orders_filtered[df_orders_filtered['SKU'] == selected_sku]
+            else:
+                df_display = df_orders_filtered
+            
+            # Показуємо тільки важливі колонки
+            display_cols = [
+                'Order Date', 'Order ID', 'SKU', 'Product Name',
+                'Quantity', 'Item Price', 'Total Price', 'Order Status',
+                'Fulfillment Channel', 'Ship City', 'Ship State', 'Ship Country'
+            ]
+            
+            df_show = df_display[display_cols].sort_values('Order Date', ascending=False)
+            
+            st.dataframe(
+                df_show.style.format({
+                    'Item Price': '${:.2f}',
+                    'Total Price': '${:.2f}',
+                    'Quantity': '{:.0f}'
+                }),
+                use_container_width=True
+            )
+            
+            # Excel Export
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df_show.to_excel(writer, index=False, sheet_name='Orders')
+            buffer.seek(0)
+            
+            st.download_button(
+                label="📥 Download Orders Excel",
+                data=buffer,
+                file_name=f"orders_{start_date}_to_{end_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # Footer info
 st.sidebar.markdown("---")
