@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import psycopg2
 import os
 import plotly.express as px
 import plotly.graph_objects as go
@@ -8,14 +7,24 @@ import io
 from sklearn.linear_model import LinearRegression
 import numpy as np
 import datetime as dt
-from dotenv import load_dotenv # Добавлено для загрузки переменных
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, text  # Оновлено для стабільності
 
-# Загружаем переменные окружения
+# Завантаження змінних середовища
 load_dotenv()
 
 st.set_page_config(page_title="Amazon FBA Ultimate BI", layout="wide", page_icon="📦")
 
-# --- СЛОВНИК ПЕРЕКЛАДІВ (ОНОВЛЕНИЙ) ---
+# --- НАЛАШТУВАННЯ БАЗИ ДАНИХ (SQLAlchemy) ---
+DATABASE_URL = os.getenv("DATABASE_URL")
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+def get_engine():
+    """Створює підключення до БД"""
+    return create_engine(DATABASE_URL)
+
+# --- СЛОВНИК ПЕРЕКЛАДІВ ---
 translations = {
     "UA": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -48,7 +57,7 @@ translations = {
         "footer_date": "📅 Дані оновлено:",
         "download_excel": "📥 Завантажити Excel",
 
-        # --- НОВЕ: Settlements ---
+        # --- Settlements ---
         "settlements_title": "🏦 Фінансові виплати (Settlements)",
         "net_payout": "Чиста виплата",
         "gross_sales": "Валові продажі",
@@ -56,6 +65,7 @@ translations = {
         "total_refunds": "Повернення коштів",
         "chart_payout_trend": "📉 Динаміка виплат",
         "chart_fee_breakdown": "💸 Структура витрат",
+        "currency_select": "💱 Валюта:",
     },
     "EN": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -88,7 +98,7 @@ translations = {
         "footer_date": "📅 Last update:",
         "download_excel": "📥 Download Excel",
 
-        # --- NEW: Settlements ---
+        # --- Settlements ---
         "settlements_title": "🏦 Financial Settlements (Payouts)",
         "net_payout": "Net Payout",
         "gross_sales": "Gross Sales",
@@ -96,6 +106,7 @@ translations = {
         "total_refunds": "Total Refunds",
         "chart_payout_trend": "📉 Payout Trend",
         "chart_fee_breakdown": "💸 Fee Breakdown",
+        "currency_select": "💱 Currency:",
     },
     "RU": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -128,7 +139,7 @@ translations = {
         "footer_date": "📅 Данные обновлены:",
         "download_excel": "📥 Скачать Excel",
 
-        # --- NEW: Settlements ---
+        # --- Settlements ---
         "settlements_title": "🏦 Финансовые выплаты (Settlements)",
         "net_payout": "Чистая выплата",
         "gross_sales": "Валовые продажи",
@@ -136,43 +147,41 @@ translations = {
         "total_refunds": "Возвраты средств",
         "chart_payout_trend": "📉 Динамика выплат",
         "chart_fee_breakdown": "💸 Структура расходов",
+        "currency_select": "💱 Валюта:",
     }
 }
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-
 # ============================================
-# ФУНКЦІЇ ЗАВАНТАЖЕННЯ ДАНИХ
+# ФУНКЦІЇ ЗАВАНТАЖЕННЯ ДАНИХ (Оновлені)
 # ============================================
 
 @st.cache_data(ttl=60)
 def load_data():
     """Load Inventory Data"""
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        df = pd.read_sql("SELECT * FROM fba_inventory ORDER BY created_at DESC", conn)
-        conn.close()
+        engine = get_engine()
+        with engine.connect() as conn:
+            df = pd.read_sql(text("SELECT * FROM fba_inventory ORDER BY created_at DESC"), conn)
         return df
     except Exception as e:
-        st.error(f"Помилка підключення до БД: {e}")
+        st.error(f"Помилка підключення до БД (Inventory): {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=60)
 def load_orders():
     """Load Orders Data"""
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        # Загружаем все заказы (не только за последнюю дату), чтобы строить графики
-        df = pd.read_sql("SELECT * FROM orders ORDER BY \"Order Date\" DESC", conn)
-        conn.close()
+        engine = get_engine()
+        with engine.connect() as conn:
+            df = pd.read_sql(text("SELECT * FROM orders ORDER BY \"Order Date\" DESC"), conn)
         
-        df['Order Date'] = pd.to_datetime(df['Order Date'], errors='coerce')
-        df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
-        df['Item Price'] = pd.to_numeric(df['Item Price'], errors='coerce').fillna(0)
-        df['Item Tax'] = pd.to_numeric(df['Item Tax'], errors='coerce').fillna(0)
-        df['Shipping Price'] = pd.to_numeric(df['Shipping Price'], errors='coerce').fillna(0)
-        df['Total Price'] = df['Item Price'] + df['Item Tax'] + df['Shipping Price']
+        # Виправлення warning про дати
+        df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=True, errors='coerce')
         
+        # Конвертація чисел
+        for col in ['Quantity', 'Item Price', 'Total Price']:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
         return df
     except Exception as e:
         st.error(f"Помилка завантаження orders: {e}")
@@ -180,18 +189,21 @@ def load_orders():
 
 @st.cache_data(ttl=60)
 def load_settlements():
-    """Load Financial Settlements Data (НОВЕ)"""
+    """Load Financial Settlements Data"""
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        df = pd.read_sql("SELECT * FROM settlements ORDER BY \"Posted Date\" DESC", conn)
-        conn.close()
+        engine = get_engine()
+        with engine.connect() as conn:
+            df = pd.read_sql(text("SELECT * FROM settlements ORDER BY \"Posted Date\" DESC"), conn)
         
         if df.empty: return pd.DataFrame()
 
-        # Data Cleaning
+        # Чистка даних
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
         df['Quantity'] = pd.to_numeric(df['Quantity'], errors='coerce').fillna(0)
-        df['Posted Date'] = pd.to_datetime(df['Posted Date'], errors='coerce')
+        df['Posted Date'] = pd.to_datetime(df['Posted Date'], dayfirst=True, errors='coerce')
+        
+        if 'Currency' not in df.columns:
+            df['Currency'] = 'USD'
         
         return df
     except Exception as e:
@@ -203,7 +215,7 @@ def load_settlements():
 # ============================================
 
 def show_overview(df_filtered, t, selected_date):
-    """📊 Головний Дашборд з карточками звітів"""
+    """📊 Головний Дашборд"""
     
     st.markdown("### 📊 Business Dashboard Overview")
     st.caption(f"Data snapshot: {selected_date}")
@@ -213,29 +225,23 @@ def show_overview(df_filtered, t, selected_date):
     
     with col1:
         st.metric(label=t["total_sku"], value=len(df_filtered))
-    
     with col2:
         st.metric(label=t["total_avail"], value=f"{int(df_filtered['Available'].sum()):,}")
-    
     with col3:
         total_val = df_filtered['Stock Value'].sum()
         st.metric(label=t["total_value"], value=f"${total_val:,.0f}")
-    
     with col4:
         velocity_sum = df_filtered['Velocity'].sum() * 30
         st.metric(label=t["velocity_30"], value=f"{int(velocity_sum):,} units")
     
     st.markdown("---")
     
-    # === AVAILABLE REPORTS ===
-    st.markdown("### 📂 Available Reports")
-    
-    # ROW 1
+    # === NAVIGATION CARDS ===
     col1, col2, col3 = st.columns(3)
     
     with col1:
         with st.container(border=True):
-            st.markdown(f"#### {t['settlements_title']}")  # НОВЕ
+            st.markdown(f"#### {t['settlements_title']}")
             st.markdown("Actual Payouts, Net Profit, Fees")
             if st.button("🏦 View Finance (Payouts) →", key="btn_settlements", use_container_width=True, type="primary"):
                 st.session_state.report_choice = "🏦 Settlements (Payouts)"
@@ -301,7 +307,7 @@ def show_overview(df_filtered, t, selected_date):
         st.plotly_chart(fig_bar, use_container_width=True)
 
 def show_settlements(t):
-    """💰 Actual Financial Settlements Report (НОВА ФУНКЦІЯ)"""
+    """💰 Actual Financial Settlements Report"""
     
     df_settlements = load_settlements()
     
@@ -309,10 +315,14 @@ def show_settlements(t):
         st.warning("⚠️ No settlement data found. Please run 'amazon_settlement_loader.py'.")
         return
 
-    # --- FILTER ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("💰 Settlement Filters")
     
+    # 1. CURRENCY FILTER
+    currencies = ['All'] + sorted(df_settlements['Currency'].unique().tolist())
+    selected_currency = st.sidebar.selectbox(t["currency_select"], currencies, index=1 if "USD" in currencies else 0)
+    
+    # 2. DATE FILTER
     min_date = df_settlements['Posted Date'].min().date()
     max_date = df_settlements['Posted Date'].max().date()
     
@@ -323,29 +333,34 @@ def show_settlements(t):
         max_value=max_date
     )
     
+    # APPLY FILTERS
+    df_filtered = df_settlements.copy()
+    
+    if selected_currency != 'All':
+        df_filtered = df_filtered[df_filtered['Currency'] == selected_currency]
+    
     if len(date_range) == 2:
         start_date, end_date = date_range
-        mask = (df_settlements['Posted Date'].dt.date >= start_date) & \
-               (df_settlements['Posted Date'].dt.date <= end_date)
-        df_filtered = df_settlements[mask]
-    else:
-        df_filtered = df_settlements
+        mask = (df_filtered['Posted Date'].dt.date >= start_date) & \
+               (df_filtered['Posted Date'].dt.date <= end_date)
+        df_filtered = df_filtered[mask]
 
     # --- KPI ---
     st.markdown(f"### {t['settlements_title']}")
     
     col1, col2, col3, col4 = st.columns(4)
     
-    # Calculation Logic
     net_payout = df_filtered['Amount'].sum()
     gross_sales = df_filtered[(df_filtered['Transaction Type'] == 'Order') & (df_filtered['Amount'] > 0)]['Amount'].sum()
     refunds = df_filtered[df_filtered['Transaction Type'] == 'Refund']['Amount'].sum()
     fees = df_filtered[(df_filtered['Amount'] < 0) & (df_filtered['Transaction Type'] != 'Refund')]['Amount'].sum()
 
-    col1.metric(t['net_payout'], f"${net_payout:,.2f}")
-    col2.metric(t['gross_sales'], f"${gross_sales:,.2f}")
-    col3.metric(t['total_refunds'], f"${refunds:,.2f}")
-    col4.metric(t['total_fees'], f"${fees:,.2f}")
+    currency_symbol = "$" if selected_currency in ['USD', 'CAD', 'All'] else ""
+
+    col1.metric(t['net_payout'], f"{currency_symbol}{net_payout:,.2f}")
+    col2.metric(t['gross_sales'], f"{currency_symbol}{gross_sales:,.2f}")
+    col3.metric(t['total_refunds'], f"{currency_symbol}{refunds:,.2f}")
+    col4.metric(t['total_fees'], f"{currency_symbol}{fees:,.2f}")
     
     st.markdown("---")
 
@@ -363,7 +378,7 @@ def show_settlements(t):
             y=daily_trend['Net Amount'],
             marker_color=daily_trend['Net Amount'].apply(lambda x: 'green' if x >= 0 else 'red'),
         ))
-        fig_trend.update_layout(height=400, yaxis_title="Net Amount ($)")
+        fig_trend.update_layout(height=400, yaxis_title=f"Net Amount ({selected_currency})")
         st.plotly_chart(fig_trend, use_container_width=True)
 
     with col2:
@@ -379,15 +394,12 @@ def show_settlements(t):
             
     # --- TABLE ---
     st.markdown("#### 📋 Transaction Details")
-    st.dataframe(df_filtered.sort_values('Posted Date', ascending=False).head(100), use_container_width=True)
+    st.dataframe(df_filtered[['Posted Date', 'Transaction Type', 'Order ID', 'Amount', 'Currency', 'Description']].sort_values('Posted Date', ascending=False).head(100), use_container_width=True)
 
 
 def show_inventory_finance(df_filtered, t):
     """💰 Фінанси складу (CFO Mode)"""
     total_val = df_filtered['Stock Value'].sum()
-    
-    if total_val == 0:
-        st.warning("⚠️ Увага: Ціна = 0. Запустіть оновлений amazon_etl.py!")
     
     col1, col2, col3 = st.columns(3)
     col1.metric("💰 Total Inventory Value", f"${total_val:,.2f}")
@@ -410,7 +422,6 @@ def show_inventory_finance(df_filtered, t):
         )
         st.plotly_chart(fig_tree, use_container_width=True)
     
-    # Top Products Table
     st.subheader(t["top_money_sku"])
     df_top = df_filtered[['SKU', 'Product Name', 'Available', 'Price', 'Stock Value']].sort_values('Stock Value', ascending=False).head(10)
     st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), use_container_width=True)
@@ -467,7 +478,6 @@ def show_ai_forecast(df, t):
             
             df_forecast = pd.DataFrame({'date': future_dates, 'Predicted': predictions})
             
-            # Show sold out date
             sold_out = df_forecast[df_forecast['Predicted'] == 0]
             if not sold_out.empty:
                 s_date = sold_out.iloc[0]['date'].date()
@@ -475,7 +485,6 @@ def show_ai_forecast(df, t):
             else:
                 st.success(t['ai_ok'])
 
-            # Chart
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=sku_data['date'], y=sku_data['Available'], name='Historical'))
             fig.add_trace(go.Scatter(x=df_forecast['date'], y=df_forecast['Predicted'], name='Forecast', line=dict(dash='dash', color='red')))
@@ -516,19 +525,16 @@ def show_orders():
     else:
         df_filtered = df_orders
 
-    # Metrics
     col1, col2, col3 = st.columns(3)
     col1.metric("📦 Orders", df_filtered['Order ID'].nunique())
     col2.metric("💰 Revenue", f"${df_filtered['Total Price'].sum():,.2f}")
     col3.metric("📦 Items", int(df_filtered['Quantity'].sum()))
     
-    # Chart
     st.markdown("#### 📈 Orders per Day")
     daily = df_filtered.groupby(df_filtered['Order Date'].dt.date)['Total Price'].sum().reset_index()
     fig = px.bar(daily, x='Order Date', y='Total Price', title="Daily Revenue")
     st.plotly_chart(fig, use_container_width=True)
     
-    # Top SKUs
     col1, col2 = st.columns(2)
     top_sku = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
     fig2 = px.bar(top_sku, x='Total Price', y='SKU', orientation='h', title="Top 10 SKU by Revenue")
@@ -543,24 +549,19 @@ def show_orders():
 # MAIN APP LOGIC
 # ============================================
 
-# Session state initialization
 if 'report_choice' not in st.session_state:
     st.session_state.report_choice = "🏠 Overview"
 
-# Language
 lang_option = st.sidebar.selectbox("🌍 Language", ["UA 🇺🇦", "EN 🇺🇸", "RU 🌍"], index=0)
 lang = "UA" if "UA" in lang_option else "EN" if "EN" in lang_option else "RU"
 t = translations[lang]
 
-# Refresh
 if st.sidebar.button(t["update_btn"], use_container_width=True):
     st.cache_data.clear()
     st.rerun()
 
-# Load Inventory Data
 df = load_data()
 
-# Data Preprocessing
 if not df.empty:
     numeric_cols = ['Available', 'Price', 'Velocity', 'Stock Value']
     for col in numeric_cols:
@@ -571,7 +572,6 @@ if not df.empty:
     df['created_at'] = pd.to_datetime(df['created_at'])
     df['date'] = df['created_at'].dt.date
 
-    # Global Filters (Inventory)
     st.sidebar.header(t["sidebar_title"])
     dates = sorted(df['date'].unique(), reverse=True)
     selected_date = st.sidebar.selectbox(t["date_label"], dates) if dates else None
@@ -586,13 +586,12 @@ else:
     df_filtered = pd.DataFrame()
     selected_date = None
 
-# Navigation
 st.sidebar.markdown("---")
 st.sidebar.header("📊 Reports")
 
 report_options = [
     "🏠 Overview",
-    "🏦 Settlements (Payouts)",  # НОВЕ
+    "🏦 Settlements (Payouts)",
     "💰 Inventory Value (CFO)",
     "🛒 Orders Analytics",
     "🐢 Inventory Health (Aging)",
@@ -600,7 +599,6 @@ report_options = [
     "📋 Data Table"
 ]
 
-# Sync sidebar with session state
 current_index = 0
 if st.session_state.report_choice in report_options:
     current_index = report_options.index(st.session_state.report_choice)
@@ -608,10 +606,9 @@ if st.session_state.report_choice in report_options:
 report_choice = st.sidebar.radio("Select Report:", report_options, index=current_index)
 st.session_state.report_choice = report_choice
 
-# === ROUTING ===
 if report_choice == "🏠 Overview":
     show_overview(df_filtered, t, selected_date)
-elif report_choice == "🏦 Settlements (Payouts)": # НОВЕ
+elif report_choice == "🏦 Settlements (Payouts)":
     show_settlements(t)
 elif report_choice == "💰 Inventory Value (CFO)":
     show_inventory_finance(df_filtered, t)
@@ -624,6 +621,5 @@ elif report_choice == "🧠 AI Forecast":
 elif report_choice == "📋 Data Table":
     show_data_table(df_filtered, t, selected_date)
 
-# Footer
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v2.1 (Full)")
+st.sidebar.caption("📦 Amazon FBA BI System v2.3 (Full Multi-Currency)")
