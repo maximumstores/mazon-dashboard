@@ -8,7 +8,7 @@ from sklearn.linear_model import LinearRegression
 import numpy as np
 import datetime as dt
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text  # Оновлено для стабільності
+from sqlalchemy import create_engine, text
 
 # Завантаження змінних середовища
 load_dotenv()
@@ -152,7 +152,7 @@ translations = {
 }
 
 # ============================================
-# ФУНКЦІЇ ЗАВАНТАЖЕННЯ ДАНИХ (Оновлені)
+# ФУНКЦІЇ ЗАВАНТАЖЕННЯ ДАНИХ
 # ============================================
 
 @st.cache_data(ttl=60)
@@ -175,13 +175,15 @@ def load_orders():
         with engine.connect() as conn:
             df = pd.read_sql(text("SELECT * FROM orders ORDER BY \"Order Date\" DESC"), conn)
         
-        # Виправлення warning про дати
         df['Order Date'] = pd.to_datetime(df['Order Date'], dayfirst=True, errors='coerce')
         
-        # Конвертація чисел
-        for col in ['Quantity', 'Item Price', 'Total Price']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
+        for col in ['Quantity', 'Item Price', 'Item Tax', 'Shipping Price']:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        
+        if 'Item Price' in df.columns and 'Quantity' in df.columns:
+            df['Total Price'] = df['Item Price'] * df['Quantity']
+        
         return df
     except Exception as e:
         st.error(f"Помилка завантаження orders: {e}")
@@ -195,7 +197,8 @@ def load_settlements():
         with engine.connect() as conn:
             df = pd.read_sql(text("SELECT * FROM settlements ORDER BY \"Posted Date\" DESC"), conn)
         
-        if df.empty: return pd.DataFrame()
+        if df.empty: 
+            return pd.DataFrame()
 
         # Чистка даних
         df['Amount'] = pd.to_numeric(df['Amount'], errors='coerce').fillna(0.0)
@@ -204,6 +207,9 @@ def load_settlements():
         
         if 'Currency' not in df.columns:
             df['Currency'] = 'USD'
+        
+        # Видаляємо рядки з невалідними датами
+        df = df.dropna(subset=['Posted Date'])
         
         return df
     except Exception as e:
@@ -243,7 +249,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown(f"#### {t['settlements_title']}")
             st.markdown("Actual Payouts, Net Profit, Fees")
-            if st.button("🏦 View Finance (Payouts) →", key="btn_settlements", use_container_width=True, type="primary"):
+            if st.button("🏦 View Finance (Payouts) →", key="btn_settlements", width='stretch', type="primary"):
                 st.session_state.report_choice = "🏦 Settlements (Payouts)"
                 st.rerun()
 
@@ -251,7 +257,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 🛒 Orders Analytics")
             st.markdown("Sales Trends, Top Products")
-            if st.button("📊 View Orders Report →", key="btn_orders", use_container_width=True, type="primary"):
+            if st.button("📊 View Orders Report →", key="btn_orders", width='stretch', type="primary"):
                 st.session_state.report_choice = "🛒 Orders Analytics"
                 st.rerun()
     
@@ -259,7 +265,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 💰 Inventory Value")
             st.markdown("Money map, Pricing analytics")
-            if st.button("💰 View Inventory Value →", key="btn_finance", use_container_width=True, type="primary"):
+            if st.button("💰 View Inventory Value →", key="btn_finance", width='stretch', type="primary"):
                 st.session_state.report_choice = "💰 Inventory Value (CFO)"
                 st.rerun()
     
@@ -272,7 +278,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 🧠 AI Forecast")
             st.markdown("Sold-out predictions")
-            if st.button("🧠 View AI Forecast →", key="btn_ai", use_container_width=True, type="primary"):
+            if st.button("🧠 View AI Forecast →", key="btn_ai", width='stretch', type="primary"):
                 st.session_state.report_choice = "🧠 AI Forecast"
                 st.rerun()
 
@@ -280,7 +286,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 🐢 Inventory Health")
             st.markdown("Aging analysis")
-            if st.button("🐢 View Health Report →", key="btn_health", use_container_width=True, type="primary"):
+            if st.button("🐢 View Health Report →", key="btn_health", width='stretch', type="primary"):
                 st.session_state.report_choice = "🐢 Inventory Health (Aging)"
                 st.rerun()
 
@@ -288,7 +294,7 @@ def show_overview(df_filtered, t, selected_date):
         with st.container(border=True):
             st.markdown("#### 📋 Data Table")
             st.markdown("Full excel export")
-            if st.button("📋 View Data Table →", key="btn_table", use_container_width=True, type="primary"):
+            if st.button("📋 View Data Table →", key="btn_table", width='stretch', type="primary"):
                 st.session_state.report_choice = "📋 Data Table"
                 st.rerun()
 
@@ -304,7 +310,8 @@ def show_overview(df_filtered, t, selected_date):
             text='Available', color='Available', color_continuous_scale='Blues'
         )
         fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
-        st.plotly_chart(fig_bar, use_container_width=True)
+        st.plotly_chart(fig_bar, width='stretch')
+
 
 def show_settlements(t):
     """💰 Actual Financial Settlements Report"""
@@ -319,19 +326,27 @@ def show_settlements(t):
     st.sidebar.subheader("💰 Settlement Filters")
     
     # 1. CURRENCY FILTER
-    currencies = ['All'] + sorted(df_settlements['Currency'].unique().tolist())
-    selected_currency = st.sidebar.selectbox(t["currency_select"], currencies, index=1 if "USD" in currencies else 0)
+    try:
+        currencies = ['All'] + sorted(df_settlements['Currency'].dropna().unique().tolist())
+        selected_currency = st.sidebar.selectbox(t["currency_select"], currencies, index=1 if "USD" in currencies else 0)
+    except Exception as e:
+        st.error(f"Error loading currencies: {e}")
+        selected_currency = 'All'
     
     # 2. DATE FILTER
-    min_date = df_settlements['Posted Date'].min().date()
-    max_date = df_settlements['Posted Date'].max().date()
-    
-    date_range = st.sidebar.date_input(
-        "📅 Transaction Date:",
-        value=(max_date - dt.timedelta(days=30), max_date),
-        min_value=min_date,
-        max_value=max_date
-    )
+    try:
+        min_date = df_settlements['Posted Date'].min().date()
+        max_date = df_settlements['Posted Date'].max().date()
+        
+        date_range = st.sidebar.date_input(
+            "📅 Transaction Date:",
+            value=(max_date - dt.timedelta(days=30), max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
+    except Exception as e:
+        st.error(f"Error with dates: {e}")
+        date_range = []
     
     # APPLY FILTERS
     df_filtered = df_settlements.copy()
@@ -345,22 +360,30 @@ def show_settlements(t):
                (df_filtered['Posted Date'].dt.date <= end_date)
         df_filtered = df_filtered[mask]
 
+    if df_filtered.empty:
+        st.warning("No data for selected filters")
+        return
+
     # --- KPI ---
     st.markdown(f"### {t['settlements_title']}")
     
     col1, col2, col3, col4 = st.columns(4)
     
-    net_payout = df_filtered['Amount'].sum()
-    gross_sales = df_filtered[(df_filtered['Transaction Type'] == 'Order') & (df_filtered['Amount'] > 0)]['Amount'].sum()
-    refunds = df_filtered[df_filtered['Transaction Type'] == 'Refund']['Amount'].sum()
-    fees = df_filtered[(df_filtered['Amount'] < 0) & (df_filtered['Transaction Type'] != 'Refund')]['Amount'].sum()
+    try:
+        net_payout = df_filtered['Amount'].sum()
+        gross_sales = df_filtered[(df_filtered['Transaction Type'] == 'Order') & (df_filtered['Amount'] > 0)]['Amount'].sum()
+        refunds = df_filtered[df_filtered['Transaction Type'] == 'Refund']['Amount'].sum()
+        fees = df_filtered[(df_filtered['Amount'] < 0) & (df_filtered['Transaction Type'] != 'Refund')]['Amount'].sum()
 
-    currency_symbol = "$" if selected_currency in ['USD', 'CAD', 'All'] else ""
+        currency_symbol = "$" if selected_currency in ['USD', 'CAD', 'All'] else ""
 
-    col1.metric(t['net_payout'], f"{currency_symbol}{net_payout:,.2f}")
-    col2.metric(t['gross_sales'], f"{currency_symbol}{gross_sales:,.2f}")
-    col3.metric(t['total_refunds'], f"{currency_symbol}{refunds:,.2f}")
-    col4.metric(t['total_fees'], f"{currency_symbol}{fees:,.2f}")
+        col1.metric(t['net_payout'], f"{currency_symbol}{net_payout:,.2f}")
+        col2.metric(t['gross_sales'], f"{currency_symbol}{gross_sales:,.2f}")
+        col3.metric(t['total_refunds'], f"{currency_symbol}{refunds:,.2f}")
+        col4.metric(t['total_fees'], f"{currency_symbol}{fees:,.2f}")
+    except Exception as e:
+        st.error(f"Error calculating metrics: {e}")
+        return
     
     st.markdown("---")
 
@@ -369,32 +392,47 @@ def show_settlements(t):
     
     with col1:
         st.subheader(t['chart_payout_trend'])
-        daily_trend = df_filtered.groupby(df_filtered['Posted Date'].dt.date)['Amount'].sum().reset_index()
-        daily_trend.columns = ['Date', 'Net Amount']
-        
-        fig_trend = go.Figure()
-        fig_trend.add_trace(go.Bar(
-            x=daily_trend['Date'],
-            y=daily_trend['Net Amount'],
-            marker_color=daily_trend['Net Amount'].apply(lambda x: 'green' if x >= 0 else 'red'),
-        ))
-        fig_trend.update_layout(height=400, yaxis_title=f"Net Amount ({selected_currency})")
-        st.plotly_chart(fig_trend, use_container_width=True)
+        try:
+            daily_trend = df_filtered.groupby(df_filtered['Posted Date'].dt.date)['Amount'].sum().reset_index()
+            daily_trend.columns = ['Date', 'Net Amount']
+            
+            fig_trend = go.Figure()
+            fig_trend.add_trace(go.Bar(
+                x=daily_trend['Date'],
+                y=daily_trend['Net Amount'],
+                marker_color=daily_trend['Net Amount'].apply(lambda x: 'green' if x >= 0 else 'red'),
+            ))
+            fig_trend.update_layout(height=400, yaxis_title=f"Net Amount ({selected_currency})")
+            st.plotly_chart(fig_trend, width='stretch')
+        except Exception as e:
+            st.error(f"Chart error: {e}")
 
     with col2:
         st.subheader(t['chart_fee_breakdown'])
-        df_costs = df_filtered[df_filtered['Amount'] < 0]
-        if not df_costs.empty:
-            cost_breakdown = df_costs.groupby('Transaction Type')['Amount'].sum().abs().reset_index()
-            fig_pie = px.pie(cost_breakdown, values='Amount', names='Transaction Type', hole=0.4)
-            fig_pie.update_layout(height=400)
-            st.plotly_chart(fig_pie, use_container_width=True)
-        else:
-            st.info("No costs in selected period")
+        try:
+            df_costs = df_filtered[df_filtered['Amount'] < 0]
+            if not df_costs.empty:
+                cost_breakdown = df_costs.groupby('Transaction Type')['Amount'].sum().abs().reset_index()
+                fig_pie = px.pie(cost_breakdown, values='Amount', names='Transaction Type', hole=0.4)
+                fig_pie.update_layout(height=400)
+                st.plotly_chart(fig_pie, width='stretch')
+            else:
+                st.info("No costs in selected period")
+        except Exception as e:
+            st.error(f"Pie chart error: {e}")
             
     # --- TABLE ---
     st.markdown("#### 📋 Transaction Details")
-    st.dataframe(df_filtered[['Posted Date', 'Transaction Type', 'Order ID', 'Amount', 'Currency', 'Description']].sort_values('Posted Date', ascending=False).head(100), use_container_width=True)
+    try:
+        display_cols = ['Posted Date', 'Transaction Type', 'Order ID', 'Amount', 'Currency', 'Description']
+        available_cols = [c for c in display_cols if c in df_filtered.columns]
+        
+        st.dataframe(
+            df_filtered[available_cols].sort_values('Posted Date', ascending=False).head(100), 
+            width='stretch'
+        )
+    except Exception as e:
+        st.error(f"Table error: {e}")
 
 
 def show_inventory_finance(df_filtered, t):
@@ -420,11 +458,11 @@ def show_inventory_finance(df_filtered, t):
             df_money, path=['Store Name', 'SKU'], values='Stock Value',
             color='Stock Value', color_continuous_scale='RdYlGn_r'
         )
-        st.plotly_chart(fig_tree, use_container_width=True)
+        st.plotly_chart(fig_tree, width='stretch')
     
     st.subheader(t["top_money_sku"])
     df_top = df_filtered[['SKU', 'Product Name', 'Available', 'Price', 'Stock Value']].sort_values('Stock Value', ascending=False).head(10)
-    st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), use_container_width=True)
+    st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), width='stretch')
 
 
 def show_aging(df_filtered, t):
@@ -440,7 +478,7 @@ def show_aging(df_filtered, t):
         with col1:
             st.subheader(t["chart_age"])
             fig_pie = px.pie(age_sums, values='Units', names='Age Group', hole=0.4)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            st.plotly_chart(fig_pie, width='stretch')
             
         with col2:
             st.subheader(t["chart_velocity"])
@@ -448,7 +486,7 @@ def show_aging(df_filtered, t):
                 df_filtered, x='Available', y='Velocity', size='Stock Value',
                 color='Store Name', hover_name='SKU', log_x=True
             )
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            st.plotly_chart(fig_scatter, width='stretch')
     else:
         st.warning("Дані про вік інвентарю відсутні. Перевірте звіт AGED у ETL.")
 
@@ -488,7 +526,7 @@ def show_ai_forecast(df, t):
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=sku_data['date'], y=sku_data['Available'], name='Historical'))
             fig.add_trace(go.Scatter(x=df_forecast['date'], y=df_forecast['Predicted'], name='Forecast', line=dict(dash='dash', color='red')))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         else:
             st.warning(t["ai_error"])
     else:
@@ -502,7 +540,7 @@ def show_data_table(df_filtered, t, selected_date):
     csv = df_filtered.to_csv(index=False).encode('utf-8')
     st.download_button(label="📥 Download CSV", data=csv, file_name="inventory.csv", mime="text/csv")
     
-    st.dataframe(df_filtered, use_container_width=True, height=600)
+    st.dataframe(df_filtered, width='stretch', height=600)
 
 
 def show_orders():
@@ -533,17 +571,17 @@ def show_orders():
     st.markdown("#### 📈 Orders per Day")
     daily = df_filtered.groupby(df_filtered['Order Date'].dt.date)['Total Price'].sum().reset_index()
     fig = px.bar(daily, x='Order Date', y='Total Price', title="Daily Revenue")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     col1, col2 = st.columns(2)
     top_sku = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(10).reset_index()
     fig2 = px.bar(top_sku, x='Total Price', y='SKU', orientation='h', title="Top 10 SKU by Revenue")
-    col1.plotly_chart(fig2, use_container_width=True)
+    col1.plotly_chart(fig2, width='stretch')
     
     status_counts = df_filtered['Order Status'].value_counts().reset_index()
     status_counts.columns = ['Status', 'Count']
     fig3 = px.pie(status_counts, values='Count', names='Status', title="Order Status")
-    col2.plotly_chart(fig3, use_container_width=True)
+    col2.plotly_chart(fig3, width='stretch')
 
 # ============================================
 # MAIN APP LOGIC
@@ -556,7 +594,7 @@ lang_option = st.sidebar.selectbox("🌍 Language", ["UA 🇺🇦", "EN 🇺🇸
 lang = "UA" if "UA" in lang_option else "EN" if "EN" in lang_option else "RU"
 t = translations[lang]
 
-if st.sidebar.button(t["update_btn"], use_container_width=True):
+if st.sidebar.button(t["update_btn"], width='stretch'):
     st.cache_data.clear()
     st.rerun()
 
@@ -622,4 +660,4 @@ elif report_choice == "📋 Data Table":
     show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v2.3 (Full Multi-Currency)")
+st.sidebar.caption("📦 Amazon FBA BI System v2.4 (Fixed)")
