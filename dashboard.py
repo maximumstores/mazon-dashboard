@@ -348,12 +348,14 @@ def show_overview(df_filtered, t, selected_date):
         st.plotly_chart(fig_bar, use_container_width=True)
 
 def show_returns():
-    """📦 Returns Analytics"""
+    """📦 Returns Analytics - Enhanced Version"""
     
     try:
         engine = get_engine()
         with engine.connect() as conn:
             df_returns = pd.read_sql(text("SELECT * FROM returns ORDER BY \"Return Date\" DESC"), conn)
+            # Завантажуємо orders для кореляції
+            df_orders = pd.read_sql(text("SELECT * FROM orders"), conn)
     except Exception as e:
         st.error(f"Error loading returns: {e}")
         return
@@ -362,21 +364,47 @@ def show_returns():
         st.warning("⚠️ No returns data. Run amazon_returns_loader.py")
         return
     
+    # === PREPROCESSING ===
+    df_returns['Return Date'] = pd.to_datetime(df_returns['Return Date'], errors='coerce')
+    
+    # Додаємо колонку Day of Week
+    df_returns['Day of Week'] = df_returns['Return Date'].dt.day_name()
+    
+    # Якщо є Price колонка, інакше спробуємо витягти з orders
+    if 'Price' not in df_returns.columns and not df_orders.empty:
+        df_orders['Order Date'] = pd.to_datetime(df_orders['Order Date'], errors='coerce')
+        # Маппінг ціни з orders (якщо можливо)
+        price_map = df_orders.groupby('SKU')['Item Price'].mean().to_dict()
+        df_returns['Price'] = df_returns['SKU'].map(price_map).fillna(0)
+    elif 'Price' not in df_returns.columns:
+        df_returns['Price'] = 0
+    
+    df_returns['Price'] = pd.to_numeric(df_returns['Price'], errors='coerce').fillna(0)
+    df_returns['Quantity'] = pd.to_numeric(df_returns['Quantity'], errors='coerce').fillna(1)
+    df_returns['Return Value'] = df_returns['Price'] * df_returns['Quantity']
+    
+    # === SIDEBAR FILTERS ===
     st.sidebar.markdown("---")
     st.sidebar.subheader("📦 Returns Filters")
     
-    # Date filter
-    df_returns['Return Date'] = pd.to_datetime(df_returns['Return Date'], errors='coerce')
     min_date = df_returns['Return Date'].min().date()
     max_date = df_returns['Return Date'].max().date()
     
     date_range = st.sidebar.date_input(
         "📅 Return Date:",
-        value=(max_date - dt.timedelta(days=7), max_date),
+        value=(max_date - dt.timedelta(days=30), max_date),
         min_value=min_date,
         max_value=max_date
     )
     
+    # Store filter
+    if 'Store Name' in df_returns.columns:
+        stores = ['All'] + sorted(df_returns['Store Name'].dropna().unique().tolist())
+        selected_store = st.sidebar.selectbox("🏪 Store:", stores)
+    else:
+        selected_store = 'All'
+    
+    # Apply filters
     if len(date_range) == 2:
         mask = (df_returns['Return Date'].dt.date >= date_range[0]) & \
                (df_returns['Return Date'].dt.date <= date_range[1])
@@ -384,84 +412,291 @@ def show_returns():
     else:
         df_filtered = df_returns
     
-    # KPIs
+    if selected_store != 'All':
+        df_filtered = df_filtered[df_filtered['Store Name'] == selected_store]
+    
+    # === KPIs ===
     st.markdown("### 📦 Returns Overview")
     
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     
     total_returns = len(df_filtered)
     unique_skus = df_filtered['SKU'].nunique()
     unique_orders = df_filtered['Order ID'].nunique()
+    total_return_value = df_filtered['Return Value'].sum()
+    avg_return_value = df_filtered['Return Value'].mean()
     
-    # Calculate return rate (need orders data)
+    # Calculate return rate
     try:
         with engine.connect() as conn:
-            df_orders = pd.read_sql(text("SELECT COUNT(DISTINCT \"Order ID\") as total FROM orders"), conn)
-            total_orders = df_orders['total'].iloc[0] if not df_orders.empty else 1
+            df_orders_count = pd.read_sql(text("SELECT COUNT(DISTINCT \"Order ID\") as total FROM orders"), conn)
+            total_orders = df_orders_count['total'].iloc[0] if not df_orders_count.empty else 1
             return_rate = (unique_orders / total_orders * 100) if total_orders > 0 else 0
     except:
         return_rate = 0
     
     col1.metric("📦 Total Returns", f"{total_returns:,}")
     col2.metric("📦 Unique SKUs", unique_skus)
-    col3.metric("📦 Affected Orders", unique_orders)
-    col4.metric("📊 Return Rate", f"{return_rate:.1f}%")
+    col3.metric("📊 Return Rate", f"{return_rate:.1f}%")
+    col4.metric("💰 Return Value", f"${total_return_value:,.2f}")
+    col5.metric("💵 Avg Return", f"${avg_return_value:.2f}")
     
     st.markdown("---")
     
-    # Charts
+    # === ALERTS SECTION ===
+    st.markdown("### ⚠️ Actionable Insights")
+    
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("#### 🏆 Top 10 Returned SKUs")
-        top_skus = df_filtered['SKU'].value_counts().head(10).reset_index()
-        top_skus.columns = ['SKU', 'Returns']
-        
-        fig = px.bar(top_skus, x='Returns', y='SKU', orientation='h')
-        fig.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+        # High risk SKUs (>10% return rate by unique SKU)
+        if not df_orders.empty:
+            sku_returns = df_filtered.groupby('SKU').agg({
+                'Order ID': 'nunique',
+                'Quantity': 'sum'
+            }).reset_index()
+            sku_returns.columns = ['SKU', 'Return Orders', 'Return Qty']
+            
+            sku_sales = df_orders.groupby('SKU')['Order ID'].nunique().reset_index()
+            sku_sales.columns = ['SKU', 'Total Orders']
+            
+            sku_risk = pd.merge(sku_returns, sku_sales, on='SKU', how='left')
+            sku_risk['Return Rate'] = (sku_risk['Return Orders'] / sku_risk['Total Orders'] * 100).fillna(0)
+            high_risk = sku_risk[sku_risk['Return Rate'] > 10].sort_values('Return Rate', ascending=False).head(10)
+            
+            if not high_risk.empty:
+                st.markdown("#### 🔴 High Risk SKUs (>10% return rate)")
+                st.dataframe(
+                    high_risk[['SKU', 'Return Rate', 'Return Orders', 'Total Orders']].style.format({
+                        'Return Rate': '{:.1f}%'
+                    }),
+                    use_container_width=True
+                )
+            else:
+                st.success("✅ No high-risk SKUs detected")
+        else:
+            st.info("Orders data needed for risk analysis")
+    
+    with col2:
+        # Top repeat reasons (appears >5 times)
+        st.markdown("#### 🎯 Action Needed - Repeat Issues")
+        if 'Reason' in df_filtered.columns:
+            reason_counts = df_filtered['Reason'].value_counts().head(5)
+            urgent_reasons = reason_counts[reason_counts > 5]
+            
+            if not urgent_reasons.empty:
+                for reason, count in urgent_reasons.items():
+                    st.warning(f"**{reason}**: {count} returns")
+            else:
+                st.success("✅ No critical repeat issues")
+        else:
+            st.info("Reason data not available")
+    
+    st.markdown("---")
+    
+    # === FINANCIAL METRICS ===
+    st.markdown("### 💰 Financial Impact")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown("#### 💵 Return Value by SKU (Top 10)")
+        top_value = df_filtered.groupby('SKU')['Return Value'].sum().nlargest(10).reset_index()
+        fig = px.bar(top_value, x='Return Value', y='SKU', orientation='h', 
+                     text='Return Value', color='Return Value', color_continuous_scale='Reds')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'}, height=350)
+        fig.update_traces(texttemplate='$%{text:,.0f}', textposition='outside')
         st.plotly_chart(fig, use_container_width=True)
     
     with col2:
-        st.markdown("#### 📊 Return Reasons")
+        st.markdown("#### 📊 Daily Return Value")
+        daily_value = df_filtered.groupby(df_filtered['Return Date'].dt.date)['Return Value'].sum().reset_index()
+        daily_value.columns = ['Date', 'Value']
+        fig = px.area(daily_value, x='Date', y='Value', 
+                      line_shape='spline', color_discrete_sequence=['#FF6B6B'])
+        fig.update_layout(height=350)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col3:
+        st.markdown("#### 💸 Return Value by Reason")
         if 'Reason' in df_filtered.columns:
-            reasons = df_filtered['Reason'].value_counts().head(10).reset_index()
-            reasons.columns = ['Reason', 'Count']
-            
-            fig = px.pie(reasons, values='Count', names='Reason', hole=0.4)
-            fig.update_layout(height=400)
+            reason_value = df_filtered.groupby('Reason')['Return Value'].sum().nlargest(8).reset_index()
+            fig = px.pie(reason_value, values='Return Value', names='Reason', 
+                        hole=0.4, color_discrete_sequence=px.colors.sequential.RdBu)
+            fig.update_layout(height=350)
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Reason data not available")
     
-    # Return trend
-    st.markdown("#### 📈 Returns Over Time")
-    daily_returns = df_filtered.groupby(df_filtered['Return Date'].dt.date).size().reset_index()
-    daily_returns.columns = ['Date', 'Returns']
+    st.markdown("---")
     
-    fig = px.line(daily_returns, x='Date', y='Returns', markers=True)
-    fig.update_layout(height=300)
-    st.plotly_chart(fig, use_container_width=True)
+    # === TIME ANALYSIS ===
+    st.markdown("### 📈 Time Trends Analysis")
     
-    # Detailed table
-    st.markdown("#### 📋 Recent Returns (Last 100)")
-    display_cols = ['Return Date', 'SKU', 'Product Name', 'Quantity', 'Reason', 'Status']
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📅 Returns by Day of Week")
+        dow_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        dow_counts = df_filtered['Day of Week'].value_counts().reindex(dow_order, fill_value=0).reset_index()
+        dow_counts.columns = ['Day', 'Returns']
+        
+        fig = px.bar(dow_counts, x='Day', y='Returns', 
+                     color='Returns', color_continuous_scale='Blues',
+                     text='Returns')
+        fig.update_layout(height=350)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📉 Return Rate Trend")
+        # Calculate daily return rate (returns / orders per day)
+        if not df_orders.empty:
+            daily_returns = df_filtered.groupby(df_filtered['Return Date'].dt.date).size().reset_index()
+            daily_returns.columns = ['Date', 'Returns']
+            
+            df_orders['Order Date'] = pd.to_datetime(df_orders['Order Date'], errors='coerce')
+            daily_orders = df_orders.groupby(df_orders['Order Date'].dt.date).size().reset_index()
+            daily_orders.columns = ['Date', 'Orders']
+            
+            trend = pd.merge(daily_returns, daily_orders, on='Date', how='outer').fillna(0)
+            trend['Return Rate'] = (trend['Returns'] / trend['Orders'] * 100).replace([np.inf, -np.inf], 0).fillna(0)
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=trend['Date'], y=trend['Return Rate'], 
+                                    mode='lines+markers', name='Return Rate %',
+                                    line=dict(color='red', width=2)))
+            fig.update_layout(height=350, yaxis_title='Return Rate %')
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Orders data needed for rate trend")
+    
+    st.markdown("---")
+    
+    # === ORIGINAL CHARTS (ENHANCED) ===
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🏆 Top 15 Returned SKUs")
+        top_skus = df_filtered['SKU'].value_counts().head(15).reset_index()
+        top_skus.columns = ['SKU', 'Returns']
+        
+        fig = px.bar(top_skus, x='Returns', y='SKU', orientation='h',
+                     color='Returns', color_continuous_scale='Oranges',
+                     text='Returns')
+        fig.update_layout(yaxis={'categoryorder':'total ascending'}, height=450)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📊 Return Reasons Distribution")
+        if 'Reason' in df_filtered.columns:
+            reasons = df_filtered['Reason'].value_counts().head(10).reset_index()
+            reasons.columns = ['Reason', 'Count']
+            
+            fig = px.pie(reasons, values='Count', names='Reason', hole=0.4,
+                        color_discrete_sequence=px.colors.sequential.RdBu)
+            fig.update_layout(height=450)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("Reason data not available")
+    
+    st.markdown("---")
+    
+    # === SKU DEEP DIVE ===
+    st.markdown("### 🔍 SKU Deep Analysis")
+    
+    if not df_orders.empty:
+        # Calculate comprehensive SKU metrics
+        sku_returns = df_filtered.groupby('SKU').agg({
+            'Order ID': 'nunique',
+            'Quantity': 'sum',
+            'Return Value': 'sum',
+            'Return Date': lambda x: (df_filtered['Return Date'].max() - x.min()).days if len(x) > 0 else 0
+        }).reset_index()
+        sku_returns.columns = ['SKU', 'Return Orders', 'Return Qty', 'Total Return Value', 'Days Since First Return']
+        
+        sku_sales = df_orders.groupby('SKU').agg({
+            'Order ID': 'nunique',
+            'Quantity': 'sum'
+        }).reset_index()
+        sku_sales.columns = ['SKU', 'Total Orders', 'Total Sold']
+        
+        sku_analysis = pd.merge(sku_returns, sku_sales, on='SKU', how='left')
+        sku_analysis['Return Rate %'] = (sku_analysis['Return Orders'] / sku_analysis['Total Orders'] * 100).fillna(0)
+        sku_analysis['Avg Return Value'] = sku_analysis['Total Return Value'] / sku_analysis['Return Orders']
+        
+        # Sort by return rate and show top 20
+        sku_analysis = sku_analysis.sort_values('Return Rate %', ascending=False).head(20)
+        
+        st.dataframe(
+            sku_analysis[[
+                'SKU', 'Return Rate %', 'Return Orders', 'Total Orders', 
+                'Return Qty', 'Total Sold', 'Total Return Value', 'Avg Return Value'
+            ]].style.format({
+                'Return Rate %': '{:.1f}%',
+                'Total Return Value': '${:,.2f}',
+                'Avg Return Value': '${:.2f}'
+            }).background_gradient(subset=['Return Rate %'], cmap='Reds'),
+            use_container_width=True
+        )
+        
+        # === CORRELATION SCATTER ===
+        st.markdown("#### 📊 Sales vs Returns Correlation")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            fig = px.scatter(sku_analysis, 
+                           x='Total Orders', 
+                           y='Return Orders',
+                           size='Total Return Value',
+                           color='Return Rate %',
+                           hover_data=['SKU'],
+                           color_continuous_scale='RdYlGn_r',
+                           labels={'Total Orders': 'Total Sales Orders', 
+                                  'Return Orders': 'Return Orders'})
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        with col2:
+            st.markdown("**Interpretation:**")
+            st.info("""
+            🟢 **Green**: Low return rate  
+            🟡 **Yellow**: Medium return rate  
+            🔴 **Red**: High return rate
+            
+            **Larger bubbles** = Higher return value
+            
+            Look for red bubbles with high sales - these are priority fixes!
+            """)
+    else:
+        st.info("Orders data needed for SKU deep analysis")
+    
+    st.markdown("---")
+    
+    # === DETAILED TABLE ===
+    st.markdown("### 📋 Recent Returns (Last 100)")
+    display_cols = ['Return Date', 'SKU', 'Product Name', 'Quantity', 'Price', 'Return Value', 'Reason', 'Status']
     available_cols = [c for c in display_cols if c in df_filtered.columns]
     
     st.dataframe(
-        df_filtered[available_cols].sort_values('Return Date', ascending=False).head(100),
+        df_filtered[available_cols].sort_values('Return Date', ascending=False).head(100).style.format({
+            'Price': '${:.2f}',
+            'Return Value': '${:.2f}'
+        }),
         use_container_width=True
     )
     
-    # SKU Analysis
-    st.markdown("#### 🔍 SKU Return Analysis")
-    sku_analysis = df_filtered.groupby('SKU').agg({
-        'Quantity': 'sum',
-        'Order ID': 'nunique'
-    }).reset_index()
-    sku_analysis.columns = ['SKU', 'Total Returned', 'Orders Affected']
-    sku_analysis = sku_analysis.sort_values('Total Returned', ascending=False).head(20)
-    
-    st.dataframe(sku_analysis, use_container_width=True)
+    # === EXPORT ===
+    st.markdown("---")
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        csv = df_filtered.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="📥 Download Returns Data (CSV)",
+            data=csv,
+            file_name=f"returns_analysis_{date_range[0]}_{date_range[1]}.csv",
+            mime="text/csv"
+        )
 
 def show_settlements(t):
     """💰 Actual Financial Settlements Report"""
@@ -892,4 +1127,4 @@ elif report_choice == "📋 FBA Inventory Table":
     show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v2.5 (Returns Added)")
+st.sidebar.caption("📦 Amazon FBA BI System v3.0 (Enhanced Returns Analytics)")
