@@ -266,9 +266,12 @@ def load_settlements():
 @st.cache_data(ttl=60)
 def load_sales_traffic():
     """Load Sales & Traffic data from spapi.sales_traffic"""
+    import psycopg2
+    db_url = os.getenv("DATABASE_URL")
+    if not db_url:
+        return pd.DataFrame()
     try:
-        import psycopg2
-        conn = psycopg2.connect(DATABASE_URL.replace("postgresql://", "postgres://", 1) if DATABASE_URL.startswith("postgresql://") else DATABASE_URL)
+        conn = psycopg2.connect(db_url)
         df = pd.read_sql("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC", conn)
         conn.close()
         
@@ -290,13 +293,10 @@ def load_sales_traffic():
 
         df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
         df = df.dropna(subset=['report_date'])
-        
-        print(f"📈 Sales & Traffic loaded: {len(df)} rows")
         return df
     except Exception as e:
-        st.error(f"Error loading sales & traffic: {e}")
         import traceback
-        print(f"Sales & Traffic error: {traceback.format_exc()}")
+        print(f"❌ Sales & Traffic DB error:\n{traceback.format_exc()}")
         return pd.DataFrame()
 
 # ============================================
@@ -419,7 +419,23 @@ def show_sales_traffic(t):
     df_st = load_sales_traffic()
 
     if df_st.empty:
-        st.warning("⚠️ No Sales & Traffic data. Run sales_traffic_loader.py first.")
+        st.warning("⚠️ No Sales & Traffic data found.")
+        # Debug info
+        st.markdown("**Debug info:**")
+        import psycopg2
+        db_url = os.getenv("DATABASE_URL")
+        st.code(f"DATABASE_URL set: {bool(db_url)}")
+        st.code(f"DATABASE_URL starts with: {db_url[:20] if db_url else 'NOT SET'}...")
+        try:
+            conn = psycopg2.connect(db_url)
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM spapi.sales_traffic")
+            count = cur.fetchone()[0]
+            st.success(f"Direct psycopg2 query: {count} rows found!")
+            cur.close()
+            conn.close()
+        except Exception as e:
+            st.error(f"Direct query error: {e}")
         return
 
     # === SIDEBAR FILTERS ===
