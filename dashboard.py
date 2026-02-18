@@ -264,16 +264,12 @@ def load_settlements():
         return pd.DataFrame()
 
 @st.cache_data(ttl=300)
-def load_sales_traffic(_v=2):
+def load_sales_traffic(cache_version=3):
     """Load Sales & Traffic data from spapi.sales_traffic"""
-    import psycopg2
-    db_url = os.getenv("DATABASE_URL")
-    if not db_url:
-        return pd.DataFrame()
     try:
-        conn = psycopg2.connect(db_url)
-        df = pd.read_sql("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC", conn)
-        conn.close()
+        engine = create_engine(DATABASE_URL, connect_args={"options": "-csearch_path=spapi,public"})
+        with engine.connect() as conn:
+            df = pd.read_sql(text("SELECT * FROM sales_traffic ORDER BY report_date DESC"), conn)
         
         if df.empty:
             return pd.DataFrame()
@@ -296,7 +292,7 @@ def load_sales_traffic(_v=2):
         return df
     except Exception as e:
         import traceback
-        print(f"❌ Sales & Traffic DB error:\n{traceback.format_exc()}")
+        print(f"❌ Sales & Traffic error:\n{traceback.format_exc()}")
         return pd.DataFrame()
 
 # ============================================
