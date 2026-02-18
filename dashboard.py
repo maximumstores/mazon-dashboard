@@ -269,13 +269,17 @@ def load_sales_traffic():
 
         df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
 
-        # Если report_date пустой (хранится как "" в БД) — берём из created_at
-        if df['report_date'].isna().all() and 'created_at' in df.columns:
-            df['report_date'] = pd.to_datetime(df['created_at'], errors='coerce')
-        elif df['report_date'].isna().any() and 'created_at' in df.columns:
-            mask = df['report_date'].isna()
-            df.loc[mask, 'report_date'] = pd.to_datetime(df.loc[mask, 'created_at'], errors='coerce')
+        # Если report_date пустой (хранится как "" в БД) — берём дату из created_at
+        if 'created_at' in df.columns:
+            created = pd.to_datetime(df['created_at'], errors='coerce').dt.normalize()
+            if df['report_date'].isna().all():
+                df['report_date'] = created
+            elif df['report_date'].isna().any():
+                mask = df['report_date'].isna()
+                df.loc[mask, 'report_date'] = created[mask]
 
+        # Оставляем только дату без времени
+        df['report_date'] = df['report_date'].dt.normalize()
         df = df.dropna(subset=['report_date'])
         return df
 
@@ -633,8 +637,7 @@ def show_sales_traffic(t):
     st.dataframe(
         asin_display.style.format({
             'Revenue': '${:,.2f}', 'Conv %': '{:.2f}%', 'Buy Box %': '{:.1f}%',
-        }).background_gradient(subset=['Revenue'], cmap='Greens')
-         .background_gradient(subset=['Conv %'], cmap='RdYlGn'),
+        }),
         use_container_width=True, height=500
     )
 
