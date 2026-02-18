@@ -265,34 +265,37 @@ def load_settlements():
 
 def load_sales_traffic():
     """Load Sales & Traffic data from spapi.sales_traffic"""
-    engine = get_engine()
     try:
+        engine = get_engine()
         with engine.connect() as conn:
-            df = pd.read_sql(text("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC"), conn)
+            result = conn.execute(text("SELECT * FROM spapi.sales_traffic ORDER BY report_date DESC"))
+            rows = result.fetchall()
+            columns = list(result.keys())
+        
+        if not rows:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(rows, columns=columns)
+
+        numeric_cols = [
+            'sessions', 'page_views', 'units_ordered', 'units_ordered_b2b',
+            'total_order_items', 'total_order_items_b2b',
+            'ordered_product_sales', 'ordered_product_sales_b2b',
+            'session_percentage', 'page_views_percentage',
+            'buy_box_percentage', 'unit_session_percentage',
+            'mobile_sessions', 'mobile_page_views',
+            'browser_sessions', 'browser_page_views',
+        ]
+        for col in numeric_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+        df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
+        df = df.dropna(subset=['report_date'])
+        return df
     except Exception as e:
         print(f"SALES_TRAFFIC_ERROR: {e}")
         return pd.DataFrame()
-    
-    if df.empty:
-        return pd.DataFrame()
-
-    numeric_cols = [
-        'sessions', 'page_views', 'units_ordered', 'units_ordered_b2b',
-        'total_order_items', 'total_order_items_b2b',
-        'ordered_product_sales', 'ordered_product_sales_b2b',
-        'session_percentage', 'page_views_percentage',
-        'buy_box_percentage', 'unit_session_percentage',
-        'mobile_sessions', 'mobile_page_views',
-        'browser_sessions', 'browser_page_views',
-    ]
-    for col in numeric_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-
-    df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
-    df = df.dropna(subset=['report_date'])
-    print(f"SALES_TRAFFIC_OK: {len(df)} rows loaded")
-    return df
 
 # ============================================
 # REPORT FUNCTIONS
@@ -414,16 +417,7 @@ def show_sales_traffic(t):
     df_st = load_sales_traffic()
 
     if df_st.empty:
-        st.error("⚠️ No Sales & Traffic data. Check Streamlit Cloud logs for SALES_TRAFFIC_ERROR")
-        # Inline debug
-        try:
-            engine = get_engine()
-            with engine.connect() as conn:
-                result = conn.execute(text("SELECT COUNT(*) FROM spapi.sales_traffic"))
-                cnt = result.scalar()
-                st.info(f"Direct query count: {cnt} rows")
-        except Exception as ex:
-            st.error(f"Direct query failed: {ex}")
+        st.warning("⚠️ No Sales & Traffic data. Run sales_traffic_loader.py first.")
         return
 
     # === SIDEBAR FILTERS ===
