@@ -404,7 +404,11 @@ def insights_settlements(df_filtered):
 
     net    = df_filtered['Amount'].sum()
     gross  = df_filtered[(df_filtered['Transaction Type'] == 'Order') & (df_filtered['Amount'] > 0)]['Amount'].sum()
-    fees   = df_filtered[(df_filtered['Amount'] < 0) & (df_filtered['Transaction Type'] != 'Refund')]['Amount'].sum()
+    fees   = df_filtered[
+        (df_filtered['Amount'] < 0) &
+        (df_filtered['Transaction Type'] != 'Refund') &
+        (~df_filtered['Transaction Type'].str.lower().str.contains('other', na=False))
+    ]['Amount'].sum()
     refunds= df_filtered[df_filtered['Transaction Type'] == 'Refund']['Amount'].sum()
 
     fee_pct    = (abs(fees) / gross * 100) if gross > 0 else 0
