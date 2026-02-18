@@ -268,6 +268,14 @@ def load_sales_traffic():
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
         df['report_date'] = pd.to_datetime(df['report_date'], errors='coerce')
+
+        # Если report_date пустой (хранится как "" в БД) — берём из created_at
+        if df['report_date'].isna().all() and 'created_at' in df.columns:
+            df['report_date'] = pd.to_datetime(df['created_at'], errors='coerce')
+        elif df['report_date'].isna().any() and 'created_at' in df.columns:
+            mask = df['report_date'].isna()
+            df.loc[mask, 'report_date'] = pd.to_datetime(df.loc[mask, 'created_at'], errors='coerce')
+
         df = df.dropna(subset=['report_date'])
         return df
 
@@ -382,25 +390,6 @@ def show_sales_traffic(t):
 
     if df_st.empty:
         st.warning("⚠️ No Sales & Traffic data found.")
-
-        # --- INLINE DEBUG (без кеша) ---
-        import psycopg2
-        db_url = os.getenv("DATABASE_URL", "")
-        st.code(f"DATABASE_URL starts with: {db_url[:30]}...")
-        try:
-            conn = psycopg2.connect(db_url)
-            cur = conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM spapi.sales_traffic")
-            count = cur.fetchone()[0]
-            st.success(f"✅ psycopg2 connected! spapi.sales_traffic has {count} rows")
-            if count > 0:
-                cur.execute("SELECT report_date, child_asin, sessions FROM spapi.sales_traffic LIMIT 3")
-                rows = cur.fetchall()
-                st.write("Sample rows:", rows)
-            cur.close()
-            conn.close()
-        except Exception as e:
-            st.error(f"❌ psycopg2 error: {e}")
         return
 
     # === SIDEBAR FILTERS ===
