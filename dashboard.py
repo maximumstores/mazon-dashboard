@@ -222,14 +222,12 @@ def load_settlements():
 
 @st.cache_data(ttl=60)
 def load_sales_traffic():
-    """Load Sales & Traffic data from spapi.sales_traffic
-    
-    Все колонки в таблице TEXT (так пишет лоадер), поэтому конвертируем в numeric.
-    search_path=spapi,public задан в get_engine() — поэтому просто 'sales_traffic'.
-    """
+    """Load Sales & Traffic data from spapi.sales_traffic"""
     try:
-        engine = get_engine()
+        engine = create_engine(DATABASE_URL)  # без connect_args
         with engine.connect() as conn:
+            # Явно ставим search_path перед запросом
+            conn.execute(text("SET search_path TO spapi, public"))
             df = pd.read_sql(
                 text("SELECT * FROM sales_traffic ORDER BY report_date DESC"),
                 conn
@@ -238,7 +236,6 @@ def load_sales_traffic():
         if df.empty:
             return pd.DataFrame()
 
-        # Все поля хранятся как TEXT, конвертируем
         numeric_cols = [
             'sessions', 'page_views', 'units_ordered', 'units_ordered_b2b',
             'total_order_items', 'total_order_items_b2b',
@@ -261,7 +258,7 @@ def load_sales_traffic():
         return df
 
     except Exception as e:
-        st.error(f"❌ Sales & Traffic load error: {e}")
+        st.error(f"❌ Sales & Traffic error: {e}")
         return pd.DataFrame()
 
 
