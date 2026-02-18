@@ -295,6 +295,294 @@ def load_sales_traffic():
 # REPORT FUNCTIONS
 # ============================================
 
+def insight_card(emoji, title, text, color="#1e1e2e"):
+    """Render a single insight card"""
+    st.markdown(f"""
+    <div style="
+        background: {color};
+        border-left: 4px solid #4472C4;
+        border-radius: 8px;
+        padding: 14px 18px;
+        margin-bottom: 10px;
+    ">
+        <div style="font-size:16px; font-weight:700; color:#fff; margin-bottom:4px;">{emoji} {title}</div>
+        <div style="font-size:14px; color:#ccc; line-height:1.5;">{text}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def insights_sales_traffic(df_filtered, asin_stats):
+    """Автоматические инсайты для Sales & Traffic"""
+    st.markdown("---")
+    st.markdown("### 🧠 Автоматические инсайты")
+
+    insights = []
+
+    total_sessions = int(df_filtered['sessions'].sum())
+    total_units    = int(df_filtered['units_ordered'].sum())
+    total_revenue  = df_filtered['ordered_product_sales'].sum()
+    avg_conv       = (total_units / total_sessions * 100) if total_sessions > 0 else 0
+    avg_buy_box    = df_filtered['buy_box_percentage'].mean()
+
+    mobile_sessions  = df_filtered['mobile_sessions'].sum() if 'mobile_sessions' in df_filtered.columns else 0
+    browser_sessions = df_filtered['browser_sessions'].sum() if 'browser_sessions' in df_filtered.columns else 0
+    mobile_pct = (mobile_sessions / (mobile_sessions + browser_sessions) * 100) if (mobile_sessions + browser_sessions) > 0 else 0
+
+    avg_conv_all = asin_stats['Conv %'].median()
+    low_conv = asin_stats[(asin_stats['Sessions'] > asin_stats['Sessions'].median()) & (asin_stats['Conv %'] < avg_conv_all)]
+    low_bb   = asin_stats[asin_stats['Buy Box %'] < 80]
+
+    revenue_per_session = total_revenue / total_sessions if total_sessions > 0 else 0
+
+    cols = st.columns(2)
+    i = 0
+
+    # Конверсия
+    if avg_conv >= 12:
+        txt = f"Конверсия <b>{avg_conv:.1f}%</b> — выше нормы Amazon (10-15%). Отличный результат, масштабируй рекламу на топ ASINы."
+        em, col = "🟢", "#0d2b1e"
+    elif avg_conv >= 8:
+        txt = f"Конверсия <b>{avg_conv:.1f}%</b> — в норме. Есть потенциал улучшить через A+ контент и отзывы."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Конверсия <b>{avg_conv:.1f}%</b> — ниже нормы. Проверь главное фото, цену и отзывы на топ ASINах."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Конверсия", txt, col)
+    i += 1
+
+    # Buy Box
+    if avg_buy_box >= 95:
+        txt = f"Buy Box <b>{avg_buy_box:.1f}%</b> — отлично. Конкуренты не перебивают цену."
+        em, col = "🟢", "#0d2b1e"
+    elif avg_buy_box >= 80:
+        txt = f"Buy Box <b>{avg_buy_box:.1f}%</b> — норма. Но {len(low_bb)} ASINов теряют Buy Box — проверь их цены."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Buy Box <b>{avg_buy_box:.1f}%</b> — критично низко! {len(low_bb)} ASINов теряют продажи конкурентам. Срочно проверь репрайсер."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Buy Box", txt, col)
+    i += 1
+
+    # Мобайл
+    if mobile_pct >= 60:
+        txt = f"<b>{mobile_pct:.0f}%</b> трафика с мобильного. Главное фото должно быть читаемым на экране 5″. Проверь мобильный вид листингов в Seller Central."
+        em, col = "📱", "#1a1a2e"
+    else:
+        txt = f"<b>{mobile_pct:.0f}%</b> мобильного трафика — ниже среднего по Amazon (~65%). Возможно, твои ASINы продвигаются через PC каналы."
+        em, col = "📱", "#1a1a2e"
+    with cols[i % 2]: insight_card(em, "Мобайл vs Браузер", txt, col)
+    i += 1
+
+    # Проблемные ASINы
+    if len(low_conv) > 0:
+        top_problem = low_conv.nlargest(1, 'Sessions').iloc[0]
+        txt = f"<b>{len(low_conv)} ASINов</b> с высоким трафиком и низкой конверсией. Самый критичный: <b>{top_problem['ASIN']}</b> — {int(top_problem['Sessions'])} сессий, конверсия {top_problem['Conv %']:.1f}%. Починить листинг = быстрые деньги."
+        em, col = "🔴", "#2b0d0d"
+    else:
+        txt = "Все ASINы с высоким трафиком конвертят хорошо. Отличная работа!"
+        em, col = "🟢", "#0d2b1e"
+    with cols[i % 2]: insight_card(em, "Упущенная выручка", txt, col)
+    i += 1
+
+    # Revenue per session
+    txt = f"Каждая сессия приносит в среднем <b>${revenue_per_session:.2f}</b>. Увеличь трафик на 1000 сессий → +${revenue_per_session*1000:,.0f} выручки."
+    with cols[i % 2]: insight_card("💡", "Цена сессии", txt, "#1a1a2e")
+    i += 1
+
+    # Топ ASIN
+    if not asin_stats.empty:
+        top = asin_stats.nlargest(1, 'Revenue').iloc[0]
+        top_pct = (top['Revenue'] / total_revenue * 100) if total_revenue > 0 else 0
+        txt = f"<b>{top['ASIN']}</b> генерирует ${top['Revenue']:,.0f} ({top_pct:.0f}% всей выручки). Это твой главный актив — приоритет по рекламному бюджету и наличию на складе."
+        with cols[i % 2]: insight_card("🏆", "Главный ASIN", txt, "#1a2b1e")
+
+
+def insights_settlements(df_filtered):
+    """Инсайты для Settlements"""
+    st.markdown("---")
+    st.markdown("### 🧠 Автоматические инсайты")
+
+    net    = df_filtered['Amount'].sum()
+    gross  = df_filtered[(df_filtered['Transaction Type'] == 'Order') & (df_filtered['Amount'] > 0)]['Amount'].sum()
+    fees   = df_filtered[(df_filtered['Amount'] < 0) & (df_filtered['Transaction Type'] != 'Refund')]['Amount'].sum()
+    refunds= df_filtered[df_filtered['Transaction Type'] == 'Refund']['Amount'].sum()
+
+    fee_pct    = (abs(fees) / gross * 100) if gross > 0 else 0
+    refund_pct = (abs(refunds) / gross * 100) if gross > 0 else 0
+    margin_pct = (net / gross * 100) if gross > 0 else 0
+
+    cols = st.columns(2)
+    i = 0
+
+    # Маржа
+    if margin_pct >= 30:
+        txt = f"Чистая маржа <b>{margin_pct:.1f}%</b> — отличный результат. Бизнес очень здоровый."
+        em, col = "🟢", "#0d2b1e"
+    elif margin_pct >= 15:
+        txt = f"Чистая маржа <b>{margin_pct:.1f}%</b> — норма для FBA. Есть пространство для оптимизации комиссий."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Чистая маржа <b>{margin_pct:.1f}%</b> — низко. Нужно срочно анализировать структуру расходов."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Чистая маржа", txt, col)
+    i += 1
+
+    # Комиссии
+    if fee_pct <= 30:
+        txt = f"Комиссии составляют <b>{fee_pct:.1f}%</b> от продаж — в норме для FBA."
+        em, col = "🟢", "#0d2b1e"
+    elif fee_pct <= 40:
+        txt = f"Комиссии <b>{fee_pct:.1f}%</b> — немного высоко. Проверь FBA fees на крупные/тяжелые SKU, возможно часть лучше продавать через FBM."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Комиссии <b>{fee_pct:.1f}%</b> — слишком высоко! Проанализируй размеры и вес товаров, пересмотри ценообразование."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Нагрузка комиссий", txt, col)
+    i += 1
+
+    # Возвраты
+    if refund_pct <= 3:
+        txt = f"Возвраты <b>{refund_pct:.1f}%</b> от продаж — отлично, клиенты довольны."
+        em, col = "🟢", "#0d2b1e"
+    elif refund_pct <= 8:
+        txt = f"Возвраты <b>{refund_pct:.1f}%</b> — умеренно. Загляни в отчёт Returns чтобы найти проблемные SKU."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Возвраты <b>{refund_pct:.1f}%</b> — критично высоко! Немедленно проверь причины возвратов, это угрожает аккаунту."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Возвраты", txt, col)
+    i += 1
+
+    # Итог
+    txt = f"Валовые продажи <b>${gross:,.0f}</b> → после комиссий и возвратов на руки <b>${net:,.0f}</b>. Комиссии съедают ${abs(fees):,.0f}."
+    with cols[i % 2]: insight_card("💰", "Итог по деньгам", txt, "#1a1a2e")
+
+
+def insights_returns(df_filtered, return_rate):
+    """Инсайты для Returns"""
+    st.markdown("---")
+    st.markdown("### 🧠 Автоматические инсайты")
+
+    total_val = df_filtered['Return Value'].sum()
+    top_reason = df_filtered['Reason'].value_counts().index[0] if 'Reason' in df_filtered.columns and not df_filtered.empty else None
+    top_sku = df_filtered['SKU'].value_counts().index[0] if not df_filtered.empty else None
+
+    cols = st.columns(2)
+    i = 0
+
+    # Return rate
+    if return_rate <= 3:
+        txt = f"Уровень возвратов <b>{return_rate:.1f}%</b> — отлично. Клиенты получают именно то, что ожидали."
+        em, col = "🟢", "#0d2b1e"
+    elif return_rate <= 8:
+        txt = f"Уровень возвратов <b>{return_rate:.1f}%</b> — приемлемо, но есть куда расти. Проверь топ причины возвратов."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Уровень возвратов <b>{return_rate:.1f}%</b> — опасно высоко! Amazon может заблокировать листинги. Нужны срочные меры."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Уровень возвратов", txt, col)
+    i += 1
+
+    # Финансовый ущерб
+    txt = f"Возвраты стоят тебе <b>${total_val:,.0f}</b> за период. Это не только потеря выручки — ещё FBA processing fees за каждый возврат."
+    with cols[i % 2]: insight_card("💸", "Финансовый ущерб", txt, "#2b1a00")
+    i += 1
+
+    # Топ причина
+    if top_reason:
+        txt = f"Главная причина возвратов: <b>«{top_reason}»</b>. Если это «не соответствует описанию» — фикс в описании или фото решит большую часть проблемы."
+        with cols[i % 2]: insight_card("🔍", "Главная причина", txt, "#1a1a2e")
+        i += 1
+
+    # Топ SKU
+    if top_sku:
+        count = df_filtered['SKU'].value_counts().iloc[0]
+        txt = f"Самый возвращаемый SKU: <b>{top_sku}</b> ({count} возвратов). Начни разбор именно с него — максимальный эффект."
+        with cols[i % 2]: insight_card("⚠️", "Проблемный SKU", txt, "#2b0d0d")
+
+
+def insights_inventory(df_filtered):
+    """Инсайты для Inventory Finance"""
+    st.markdown("---")
+    st.markdown("### 🧠 Автоматические инсайты")
+
+    total_val   = df_filtered['Stock Value'].sum()
+    total_units = df_filtered['Available'].sum()
+    avg_vel     = df_filtered['Velocity'].mean() if 'Velocity' in df_filtered.columns else 0
+
+    # Топ SKU по заморозке
+    top_frozen  = df_filtered.nlargest(1, 'Stock Value').iloc[0] if not df_filtered.empty else None
+    dead_stock  = df_filtered[df_filtered['Velocity'] == 0] if 'Velocity' in df_filtered.columns else pd.DataFrame()
+
+    cols = st.columns(2)
+    i = 0
+
+    # Заморозка
+    txt = f"В товарных остатках заморожено <b>${total_val:,.0f}</b>. Это деньги, которые не работают. При velocity {avg_vel:.2f} ед/день запас уйдёт примерно за {int(total_units / avg_vel / 30) if avg_vel > 0 else '∞'} мес."
+    with cols[i % 2]: insight_card("🧊", "Заморозка капитала", txt, "#1a1a2e")
+    i += 1
+
+    # Главный актив
+    if top_frozen is not None:
+        pct = (top_frozen['Stock Value'] / total_val * 100) if total_val > 0 else 0
+        txt = f"SKU <b>{top_frozen['SKU']}</b> держит ${top_frozen['Stock Value']:,.0f} ({pct:.0f}% всего капитала). Убедись, что этот товар хорошо продаётся — иначе большой риск."
+        with cols[i % 2]: insight_card("🏦", "Главный актив", txt, "#1a2b1e")
+        i += 1
+
+    # Мёртвый сток
+    if len(dead_stock) > 0:
+        dead_val = dead_stock['Stock Value'].sum()
+        txt = f"<b>{len(dead_stock)} SKU</b> с нулевой скоростью продаж — заморожено <b>${dead_val:,.0f}</b>. Рассмотри ликвидацию через Outlet или снижение цены."
+        with cols[i % 2]: insight_card("☠️", "Мёртвый сток", txt, "#2b0d0d")
+        i += 1
+
+    # Оборачиваемость
+    days_stock = int(total_units / (avg_vel * 30) * 30) if avg_vel > 0 else 999
+    if days_stock <= 30:
+        txt = f"Запасов хватит на <b>{days_stock} дней</b> — риск out of stock! Срочно размести заказ у поставщика."
+        em, col = "🔴", "#2b0d0d"
+    elif days_stock <= 60:
+        txt = f"Запасов на <b>{days_stock} дней</b> — нужно планировать поставку в ближайшие 2 недели."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Запасов на <b>{days_stock} дней</b> — запас достаточный, можно не торопиться с поставкой."
+        em, col = "🟢", "#0d2b1e"
+    with cols[i % 2]: insight_card(em, "Оборачиваемость", txt, col)
+
+
+def insights_orders(df_filtered):
+    """Инсайты для Orders"""
+    st.markdown("---")
+    st.markdown("### 🧠 Автоматические инсайты")
+
+    total_rev    = df_filtered['Total Price'].sum()
+    total_orders = df_filtered['Order ID'].nunique()
+    total_items  = df_filtered['Quantity'].sum()
+    avg_order    = total_rev / total_orders if total_orders > 0 else 0
+    days         = max((df_filtered['Order Date'].max() - df_filtered['Order Date'].min()).days, 1)
+    rev_per_day  = total_rev / days
+
+    top_sku = df_filtered.groupby('SKU')['Total Price'].sum().nlargest(1)
+
+    cols = st.columns(2)
+    i = 0
+
+    txt = f"Средний чек <b>${avg_order:.2f}</b>. Подними его через Bundle или upsell — +10% к AOV = +${total_rev*0.1:,.0f} выручки за период."
+    with cols[i % 2]: insight_card("🛒", "Средний чек", txt, "#1a1a2e")
+    i += 1
+
+    txt = f"В среднем <b>${rev_per_day:,.0f}/день</b> выручки за выбранный период. Экстраполяция на месяц: <b>${rev_per_day*30:,.0f}</b>."
+    with cols[i % 2]: insight_card("📈", "Дневная выручка", txt, "#1a2b1e")
+    i += 1
+
+    if not top_sku.empty:
+        sku_name = top_sku.index[0]
+        sku_rev  = top_sku.iloc[0]
+        pct = (sku_rev / total_rev * 100) if total_rev > 0 else 0
+        txt = f"<b>{sku_name}</b> даёт {pct:.0f}% выручки (${sku_rev:,.0f}). Высокая концентрация риска — если этот SKU выйдет из строя, потери будут ощутимы."
+        with cols[i % 2]: insight_card("⚡", "Концентрация риска", txt, "#2b1a00")
+
+
 def show_overview(df_filtered, t, selected_date):
     st.markdown("### 📊 Business Dashboard Overview")
     st.caption(f"Data snapshot: {selected_date}")
@@ -649,6 +937,8 @@ def show_sales_traffic(t):
         mime="text/csv"
     )
 
+    insights_sales_traffic(df_filtered, asin_stats)
+
 
 def show_settlements(t):
     df_settlements = load_settlements()
@@ -729,6 +1019,8 @@ def show_settlements(t):
         df_filtered[available_cols].sort_values('Posted Date', ascending=False).head(100),
         use_container_width=True
     )
+
+    insights_settlements(df_filtered)
 
 
 def show_returns():
@@ -894,6 +1186,8 @@ def show_returns():
         mime="text/csv"
     )
 
+    insights_returns(df_filtered, return_rate)
+
 
 def show_inventory_finance(df_filtered, t):
     total_val = df_filtered['Stock Value'].sum()
@@ -919,6 +1213,8 @@ def show_inventory_finance(df_filtered, t):
     df_top = df_filtered[['SKU', 'Product Name', 'Available', 'Price', 'Stock Value']]\
         .sort_values('Stock Value', ascending=False).head(10)
     st.dataframe(df_top.style.format({'Price': "${:.2f}", 'Stock Value': "${:,.2f}"}), use_container_width=True)
+
+    insights_inventory(df_filtered)
 
 
 def show_aging(df_filtered, t):
@@ -1066,6 +1362,8 @@ def show_orders():
             status_counts.columns = ['Status', 'Count']
             fig3 = px.pie(status_counts, values='Count', names='Status', hole=0.4)
             st.plotly_chart(fig3, use_container_width=True)
+
+    insights_orders(df_filtered)
 
 
 # ============================================
