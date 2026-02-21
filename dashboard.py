@@ -66,6 +66,13 @@ translations = {
         "st_conversion": "Конверсія",
         "st_revenue": "Дохід",
         "st_buy_box": "Buy Box %",
+        # Reviews
+        "reviews_title": "⭐ Відгуки покупців",
+        "total_reviews": "Всього відгуків",
+        "avg_review_rating": "Середній рейтинг",
+        "verified_pct": "Верифіковані (%)",
+        "star_dist": "Розподіл по зірках",
+        "worst_asin": "Проблемні ASIN (1-2 зірки)",
     },
     "EN": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -108,6 +115,13 @@ translations = {
         "st_conversion": "Conversion",
         "st_revenue": "Revenue",
         "st_buy_box": "Buy Box %",
+        # Reviews
+        "reviews_title": "⭐ Customer Reviews",
+        "total_reviews": "Total Reviews",
+        "avg_review_rating": "Average Rating",
+        "verified_pct": "Verified (%)",
+        "star_dist": "Star Distribution",
+        "worst_asin": "Problematic ASINs (1-2 Stars)",
     },
     "RU": {
         "title": "📦 Amazon FBA: Business Intelligence Hub",
@@ -150,6 +164,13 @@ translations = {
         "st_conversion": "Конверсия",
         "st_revenue": "Доход",
         "st_buy_box": "Buy Box %",
+        # Reviews
+        "reviews_title": "⭐ Отзывы покупателей",
+        "total_reviews": "Всего отзывов",
+        "avg_review_rating": "Средний рейтинг",
+        "verified_pct": "Верифицированные (%)",
+        "star_dist": "Распределение по звездам",
+        "worst_asin": "Проблемные ASIN (1-2 звезды)",
     }
 }
 
@@ -296,6 +317,21 @@ def load_returns():
         return pd.DataFrame(), pd.DataFrame()
 
 
+@st.cache_data(ttl=60)
+def load_reviews():
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            df = pd.read_sql(text('SELECT * FROM amazon_reviews ORDER BY created_at DESC'), conn)
+        if df.empty:
+            return pd.DataFrame()
+        df['review_date'] = pd.to_datetime(df['review_date'], errors='coerce')
+        df['rating'] = pd.to_numeric(df['rating'], errors='coerce').fillna(0)
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+
 # ============================================
 # INSIGHT CARD
 # ============================================
@@ -316,7 +352,7 @@ def insight_card(emoji, title, text, color="#1e1e2e"):
 
 
 # ============================================
-# INSIGHT FUNCTIONS (used in reports AND overview)
+# INSIGHT FUNCTIONS
 # ============================================
 
 def insights_sales_traffic(df_filtered, asin_stats):
@@ -566,26 +602,65 @@ def insights_orders(df_filtered):
         with cols[i % 2]: insight_card("⚡", "Концентрация риска", txt, "#2b1a00")
 
 
+def insights_reviews(df_filtered):
+    st.markdown("---")
+    st.markdown("### 🧠 Автоматические инсайты (Reviews)")
+
+    total = len(df_filtered)
+    if total == 0:
+        return
+
+    avg_rating = df_filtered['rating'].mean()
+    negative_df = df_filtered[df_filtered['rating'] <= 2]
+    neg_pct = (len(negative_df) / total) * 100
+
+    cols = st.columns(2)
+    i = 0
+
+    if avg_rating >= 4.4:
+        txt = f"Средний балл <b>{avg_rating:.1f}</b> — отличный показатель! Листинги хорошо конвертят трафик благодаря социальному доверию."
+        em, col = "🟢", "#0d2b1e"
+    elif avg_rating >= 4.0:
+        txt = f"Средний балл <b>{avg_rating:.1f}</b> — в норме, но есть риск скатиться ниже 4.0. Стоит поработать с возражениями."
+        em, col = "🟡", "#2b2400"
+    else:
+        txt = f"Средний балл <b>{avg_rating:.1f}</b> — критично! Рейтинг ниже 4 звезд сильно режет конверсию и удорожает рекламу (PPC)."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Здоровье рейтинга", txt, col)
+    i += 1
+
+    if neg_pct <= 10:
+        txt = f"Всего <b>{neg_pct:.1f}%</b> негативных отзывов (1-2 звезды). Продукт полностью соответствует ожиданиям рынка."
+        em, col = "🟢", "#0d2b1e"
+    else:
+        txt = f"<b>{neg_pct:.1f}%</b> отзывов — негативные! Внимательно прочитай их тексты ниже, чтобы исправить проблему на производстве (или размерную сетку)."
+        em, col = "🔴", "#2b0d0d"
+    with cols[i % 2]: insight_card(em, "Уровень негатива", txt, col)
+    i += 1
+
+    if not negative_df.empty:
+        worst_asin = negative_df['asin'].value_counts().index[0]
+        worst_count = negative_df['asin'].value_counts().iloc[0]
+        txt = f"ASIN <b>{worst_asin}</b> собрал больше всего негатива ({worst_count} шт). Проверь вкладку Returns для этого товара."
+        with cols[i % 2]: insight_card("⚠️", "Токсичный ASIN", txt, "#2b0d0d")
+
+
 # ============================================
-# OVERVIEW CONSOLIDATED INSIGHTS (NEW)
+# OVERVIEW CONSOLIDATED INSIGHTS
 # ============================================
 
 def show_overview_insights(df_inventory):
-    """
-    Зведений блок інсайтів з усіх модулів на головному Overview.
-    Використовує Streamlit tabs для чіткого поділу.
-    """
     st.markdown("---")
     st.markdown("## 🧠 Business Intelligence: Зведені інсайти")
     st.caption("Автоматичний аналіз всіх модулів — без переходу по звітах")
 
-    # --- Load all data silently ---
     df_settlements = load_settlements()
     df_st          = load_sales_traffic()
     df_orders      = load_orders()
     df_returns_raw, df_orders_raw = load_returns()
+    df_reviews     = load_reviews()
 
-    # --- Prepare returns ---
+    # Prepare returns
     df_returns = pd.DataFrame()
     return_rate = 0
     if not df_returns_raw.empty:
@@ -613,23 +688,21 @@ def show_overview_insights(df_inventory):
                     return_rate = (unique_return_orders / total_orders * 100) if total_orders > 0 else 0
                     break
 
-    # --- Tab layout ---
     tabs = st.tabs([
         "💰 Inventory",
         "🏦 Settlements",
         "📈 Sales & Traffic",
         "🛒 Orders",
         "📦 Returns",
+        "⭐ Reviews",
     ])
 
-    # TAB 1: Inventory
     with tabs[0]:
         if not df_inventory.empty and 'Stock Value' in df_inventory.columns:
             insights_inventory(df_inventory)
         else:
             st.info("📦 Дані по інвентарю відсутні")
 
-    # TAB 2: Settlements (last 30 days)
     with tabs[1]:
         if not df_settlements.empty:
             max_d = df_settlements['Posted Date'].max()
@@ -638,7 +711,6 @@ def show_overview_insights(df_inventory):
         else:
             st.info("🏦 Дані по виплатах відсутні. Запусти amazon_settlement_loader.py")
 
-    # TAB 3: Sales & Traffic (last 14 days)
     with tabs[2]:
         if not df_st.empty:
             max_d = df_st['report_date'].max()
@@ -659,7 +731,6 @@ def show_overview_insights(df_inventory):
         else:
             st.info("📈 Дані Sales & Traffic відсутні. Запусти sales_traffic_loader.py")
 
-    # TAB 4: Orders (last 30 days)
     with tabs[3]:
         if not df_orders.empty:
             max_d = df_orders['Order Date'].max()
@@ -668,7 +739,6 @@ def show_overview_insights(df_inventory):
         else:
             st.info("🛒 Дані замовлень відсутні. Запусти amazon_orders_loader.py")
 
-    # TAB 5: Returns (last 30 days)
     with tabs[4]:
         if not df_returns.empty:
             max_d = df_returns['Return Date'].max()
@@ -676,6 +746,12 @@ def show_overview_insights(df_inventory):
             insights_returns(df_r30 if not df_r30.empty else df_returns, return_rate)
         else:
             st.info("📦 Дані повернень відсутні. Запусти amazon_returns_loader.py")
+
+    with tabs[5]:
+        if not df_reviews.empty:
+            insights_reviews(df_reviews)
+        else:
+            st.info("⭐ Дані відгуків відсутні. Перевір ETL-скрипт (Apify → Postgres).")
 
 
 # ============================================
@@ -756,10 +832,10 @@ def show_overview(df_filtered, t, selected_date):
                 st.rerun()
     with col4:
         with st.container(border=True):
-            st.markdown("#### 📋 FBA Data Table")
-            st.markdown("Full excel export")
-            if st.button("📋 View FBA Data →", key="btn_table", use_container_width=True, type="primary"):
-                st.session_state.report_choice = "📋 FBA Inventory Table"
+            st.markdown("#### ⭐ Amazon Reviews")
+            st.markdown("Ratings, sentiment, problem ASINs")
+            if st.button("⭐ View Reviews →", key="btn_reviews", use_container_width=True, type="primary"):
+                st.session_state.report_choice = "⭐ Amazon Reviews"
                 st.rerun()
 
     st.markdown("---")
@@ -773,10 +849,97 @@ def show_overview(df_filtered, t, selected_date):
         fig_bar.update_layout(yaxis={'categoryorder': 'total ascending'}, height=400)
         st.plotly_chart(fig_bar, use_container_width=True)
 
-    # =============================================
-    # 🧠 CONSOLIDATED INSIGHTS — всі модулі разом
-    # =============================================
     show_overview_insights(df_filtered)
+
+
+def show_reviews(t):
+    df_reviews = load_reviews()
+
+    if df_reviews.empty:
+        st.warning("⚠️ Не знайдено даних про відгуки. Перевірте, чи працює ETL-скрипт (Apify -> Postgres).")
+        return
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("⭐ Фільтри відгуків")
+
+    asins = ['All'] + sorted(df_reviews['asin'].dropna().unique().tolist())
+    selected_asin = st.sidebar.selectbox("📦 ASIN:", asins)
+
+    stars = ['All', 5, 4, 3, 2, 1]
+    selected_star = st.sidebar.selectbox("⭐ Rating:", stars)
+
+    df_filtered = df_reviews.copy()
+    if selected_asin != 'All':
+        df_filtered = df_filtered[df_filtered['asin'] == selected_asin]
+    if selected_star != 'All':
+        df_filtered = df_filtered[df_filtered['rating'] == selected_star]
+
+    if df_filtered.empty:
+        st.warning("Немає відгуків за цими фільтрами.")
+        return
+
+    st.markdown(f"### {t['reviews_title']}")
+
+    total_revs   = len(df_filtered)
+    avg_rating   = df_filtered['rating'].mean()
+    verified_pct = (df_filtered['is_verified'].sum() / total_revs * 100) if total_revs > 0 and 'is_verified' in df_filtered.columns else 0
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric(t["total_reviews"],      f"{total_revs:,}")
+    col2.metric(t["avg_review_rating"],  f"{avg_rating:.2f} ⭐")
+    col3.metric(t["verified_pct"],       f"{verified_pct:.1f}%")
+
+    st.markdown("---")
+    col_chart1, col_chart2 = st.columns([1, 1])
+
+    with col_chart1:
+        st.subheader(t["star_dist"])
+        star_counts = df_filtered['rating'].value_counts().reindex([5, 4, 3, 2, 1]).fillna(0).reset_index()
+        star_counts.columns = ['Звезды', 'Количество']
+        fig_stars = px.bar(
+            star_counts, x='Количество', y='Звезды', orientation='h',
+            color='Звезды', color_continuous_scale='RdYlGn', text='Количество'
+        )
+        fig_stars.update_layout(
+            yaxis=dict(type='category', categoryorder='array', categoryarray=[1, 2, 3, 4, 5]),
+            height=350
+        )
+        st.plotly_chart(fig_stars, use_container_width=True)
+
+    with col_chart2:
+        st.subheader(t["worst_asin"])
+        bad_reviews = df_reviews[df_reviews['rating'] <= 2]
+        if not bad_reviews.empty:
+            bad_asins = bad_reviews['asin'].value_counts().head(5).reset_index()
+            bad_asins.columns = ['ASIN', 'Negative Reviews']
+            fig_bad = px.bar(
+                bad_asins, x='ASIN', y='Negative Reviews',
+                text='Negative Reviews', color_discrete_sequence=['#FF6B6B']
+            )
+            fig_bad.update_layout(height=350)
+            st.plotly_chart(fig_bad, use_container_width=True)
+        else:
+            st.success("🎉 Негативных отзывов не найдено!")
+
+    insights_reviews(df_filtered)
+
+    st.markdown("---")
+    st.markdown("### 📋 Тексти відгуків (топ-100 за датою)")
+    display_cols   = ['review_date', 'asin', 'rating', 'title', 'content', 'product_attributes', 'author', 'is_verified']
+    available_cols = [c for c in display_cols if c in df_filtered.columns]
+    st.dataframe(
+        df_filtered[available_cols].sort_values('rating', ascending=True).head(100),
+        use_container_width=True,
+        height=400
+    )
+
+    csv = df_filtered.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Download Reviews CSV",
+        data=csv,
+        file_name="amazon_reviews.csv",
+        mime="text/csv"
+    )
 
 
 def show_sales_traffic(t):
@@ -1499,6 +1662,7 @@ report_options = [
     "💰 Inventory Value (CFO)",
     "🛒 Orders Analytics",
     "📦 Returns Analytics",
+    "⭐ Amazon Reviews",
     "🐢 Inventory Health (Aging)",
     "🧠 AI Forecast",
     "📋 FBA Inventory Table"
@@ -1523,6 +1687,8 @@ elif report_choice == "🛒 Orders Analytics":
     show_orders()
 elif report_choice == "📦 Returns Analytics":
     show_returns()
+elif report_choice == "⭐ Amazon Reviews":
+    show_reviews(t)
 elif report_choice == "🐢 Inventory Health (Aging)":
     show_aging(df_filtered, t)
 elif report_choice == "🧠 AI Forecast":
@@ -1531,4 +1697,4 @@ elif report_choice == "📋 FBA Inventory Table":
     show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v3.2")
+st.sidebar.caption("📦 Amazon FBA BI System v3.3")
