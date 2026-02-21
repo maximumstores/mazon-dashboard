@@ -677,9 +677,116 @@ def show_reviews(t):
             asin_stats.sort_values('Рейтинг').style
                 .format({'Рейтинг':'{:.2f}', 'Neg %':'{:.1f}%'})
                 .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
-                .background_gradient(subset=['Neg %'], cmap='RdYlGn_r'),
+                .background_gradient(subset=['Neg %'],   cmap='RdYlGn_r'),
             use_container_width=True
         )
+
+        # ---- Variant breakdown by product_attributes ----
+        if 'product_attributes' in df.columns:
+            st.markdown("---")
+            st.markdown("### 🎨 Які варіанти (Size / Color) збирають негатив?")
+            st.caption("Парсимо product_attributes → бачимо проблемні комбінації")
+
+            df_attr = df.copy()
+            df_attr['product_attributes'] = df_attr['product_attributes'].fillna('').astype(str)
+
+            def parse_attr(s):
+                """Extract Size and Color from attribute string like 'Size: X-Large, Color: 250 Navy'"""
+                size, color = None, None
+                for part in s.split(','):
+                    part = part.strip()
+                    if part.lower().startswith('size:'):
+                        size = part.split(':', 1)[1].strip()
+                    elif part.lower().startswith('color:'):
+                        color = part.split(':', 1)[1].strip()
+                return pd.Series({'Size': size or 'N/A', 'Color': color or 'N/A'})
+
+            parsed = df_attr['product_attributes'].apply(parse_attr)
+            df_attr = pd.concat([df_attr.reset_index(drop=True), parsed], axis=1)
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("#### 📏 Рейтинг по Size")
+                size_stats = df_attr[df_attr['Size'] != 'N/A'].groupby('Size').agg(
+                    Відгуків=('rating','count'),
+                    Рейтинг=('rating','mean'),
+                    Neg=('rating', lambda x: (x<=2).sum()),
+                ).reset_index()
+                size_stats['Neg %'] = (size_stats['Neg']/size_stats['Відгуків']*100).round(1)
+                size_stats = size_stats[size_stats['Відгуків'] >= 3].sort_values('Рейтинг', ascending=True)
+
+                if not size_stats.empty:
+                    colors_s = ['#F44336' if r<3.5 else '#FFC107' if r<4.2 else '#4CAF50' for r in size_stats['Рейтинг']]
+                    fig_size = go.Figure(go.Bar(
+                        x=size_stats['Рейтинг'], y=size_stats['Size'], orientation='h',
+                        marker_color=colors_s,
+                        text=[f"{r:.2f}★ ({n:.0f}% neg, {v} відг.)" for r,n,v in zip(size_stats['Рейтинг'], size_stats['Neg %'], size_stats['Відгуків'])],
+                        textposition='outside',
+                    ))
+                    fig_size.add_vline(x=4.0, line_dash="dash", line_color="orange")
+                    fig_size.update_layout(height=max(280, len(size_stats)*40), xaxis_range=[1, 5.8])
+                    st.plotly_chart(fig_size, use_container_width=True)
+                else:
+                    st.info("Недостатньо даних по розмірах")
+
+            with col2:
+                st.markdown("#### 🎨 Рейтинг по Color")
+                color_stats = df_attr[df_attr['Color'] != 'N/A'].groupby('Color').agg(
+                    Відгуків=('rating','count'),
+                    Рейтинг=('rating','mean'),
+                    Neg=('rating', lambda x: (x<=2).sum()),
+                ).reset_index()
+                color_stats['Neg %'] = (color_stats['Neg']/color_stats['Відгуків']*100).round(1)
+                color_stats = color_stats[color_stats['Відгуків'] >= 3].sort_values('Рейтинг', ascending=True)
+
+                if not color_stats.empty:
+                    colors_c = ['#F44336' if r<3.5 else '#FFC107' if r<4.2 else '#4CAF50' for r in color_stats['Рейтинг']]
+                    fig_color = go.Figure(go.Bar(
+                        x=color_stats['Рейтинг'], y=color_stats['Color'], orientation='h',
+                        marker_color=colors_c,
+                        text=[f"{r:.2f}★ ({n:.0f}% neg, {v} відг.)" for r,n,v in zip(color_stats['Рейтинг'], color_stats['Neg %'], color_stats['Відгуків'])],
+                        textposition='outside',
+                    ))
+                    fig_color.add_vline(x=4.0, line_dash="dash", line_color="orange")
+                    fig_color.update_layout(height=max(280, len(color_stats)*40), xaxis_range=[1, 5.8])
+                    st.plotly_chart(fig_color, use_container_width=True)
+                else:
+                    st.info("Недостатньо даних по кольорах")
+
+            # Top problem variants table
+            st.markdown("#### ⚠️ Топ проблемних варіантів (рейтинг < 4.0, мін. 3 відгуки)")
+            df_variants = df_attr[df_attr['Size'] != 'N/A'].copy()
+            if 'asin' in df_variants.columns:
+                var_group = df_variants.groupby(['asin','Size','Color']).agg(
+                    Відгуків=('rating','count'),
+                    Рейтинг=('rating','mean'),
+                    Neg=('rating', lambda x: (x<=2).sum()),
+                ).reset_index()
+            else:
+                var_group = df_variants.groupby(['Size','Color']).agg(
+                    Відгуків=('rating','count'),
+                    Рейтинг=('rating','mean'),
+                    Neg=('rating', lambda x: (x<=2).sum()),
+                ).reset_index()
+
+            var_group['Neg %'] = (var_group['Neg']/var_group['Відгуків']*100).round(1)
+            problem_variants = var_group[
+                (var_group['Рейтинг'] < 4.0) & (var_group['Відгуків'] >= 3)
+            ].sort_values('Neg %', ascending=False).head(20)
+
+            if not problem_variants.empty:
+                st.dataframe(
+                    problem_variants.style
+                        .format({'Рейтинг':'{:.2f}', 'Neg %':'{:.1f}%'})
+                        .background_gradient(subset=['Рейтинг'], cmap='RdYlGn')
+                        .background_gradient(subset=['Neg %'],   cmap='RdYlGn_r'),
+                    use_container_width=True
+                )
+                st.caption("💡 Ці комбінації — кандидати на зміну розмірної сітки, переопис або зупинку відвантаження")
+            else:
+                st.success("🎉 Всі варіанти мають рейтинг ≥ 4.0 або недостатньо відгуків для висновків")
+
         st.markdown("---")
         st.markdown("### 📊 Загальний розподіл зірок")
 
