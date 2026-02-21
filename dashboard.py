@@ -685,17 +685,15 @@ def show_country_asin_insights(df, has_domain):
 
 
 def show_asin_links_table(df, has_domain):
-    """Show table of all ASINs with clickable Amazon links per country."""
-    st.markdown("### 🔗 Прямі посилання на Amazon")
-    st.caption("Клікни на посилання — відкриється сторінка товару на потрібному маркетплейсі")
+    """Show dataframe of all ASINs with clickable Amazon links + row selection → triggers ASIN detail view."""
+    st.markdown("### 🔗 Всі ASINи — огляд по країнах")
+    st.caption("👆 Клікни на рядок — побачиш детальний аналіз цього ASIN · Посилання відкриють Amazon у новій вкладці")
 
     if 'asin' not in df.columns:
         st.info("Немає даних про ASINи.")
-        return
+        return None, None
 
-    rows = []
     if has_domain and 'domain' in df.columns:
-        # One row per ASIN × domain combo that exists in data
         combos = df.groupby(['asin', 'domain']).agg(
             Reviews=('rating', 'count'),
             Rating=('rating', 'mean'),
@@ -706,13 +704,11 @@ def show_asin_links_table(df, has_domain):
         combos['🔗 Amazon'] = combos.apply(
             lambda r: f"https://www.amazon.{r['domain']}/dp/{r['asin']}", axis=1
         )
-        combos = combos.sort_values(['asin', 'domain'])
-        rows = combos[['asin', 'Country', 'Reviews', 'Rating', 'Neg %', '🔗 Amazon']].rename(
-            columns={'asin': 'ASIN'}
-        )
+        combos = combos.sort_values(['Neg %'], ascending=False)
+        table_df = combos[['asin', 'Country', 'Reviews', 'Rating', 'Neg %', 'domain', '🔗 Amazon']].rename(
+            columns={'asin': 'ASIN', 'domain': '_domain'}
+        ).reset_index(drop=True)
     else:
-        # No domain — just unique ASINs, link to .com
-        asins = df['asin'].dropna().unique()
         asin_stats = df.groupby('asin').agg(
             Reviews=('rating', 'count'),
             Rating=('rating', 'mean'),
@@ -720,56 +716,46 @@ def show_asin_links_table(df, has_domain):
         ).reset_index()
         asin_stats['Neg %'] = (asin_stats['Neg'] / asin_stats['Reviews'] * 100).round(1)
         asin_stats['🔗 Amazon'] = asin_stats['asin'].apply(lambda a: f"https://www.amazon.com/dp/{a}")
-        rows = asin_stats[['asin', 'Reviews', 'Rating', 'Neg %', '🔗 Amazon']].rename(columns={'asin': 'ASIN'})
+        asin_stats['_domain'] = 'com'
+        table_df = asin_stats[['asin', 'Reviews', 'Rating', 'Neg %', '_domain', '🔗 Amazon']].rename(
+            columns={'asin': 'ASIN'}
+        ).reset_index(drop=True)
 
-    # Render as HTML table with clickable links
-    def rating_color(r):
-        if r >= 4.4: return "color:#4CAF50;font-weight:bold"
-        elif r >= 4.0: return "color:#FFC107;font-weight:bold"
-        else: return "color:#F44336;font-weight:bold"
+    table_df['Rating'] = table_df['Rating'].round(2)
 
-    html = """<style>
-    .asin-table { border-collapse:collapse; width:100%; font-size:14px; }
-    .asin-table th { background:#1e1e2e; color:#aaa; padding:8px 12px; text-align:left; border-bottom:2px solid #333; }
-    .asin-table td { padding:7px 12px; border-bottom:1px solid #2a2a3e; }
-    .asin-table tr:hover td { background:#1a1a2e; }
-    .asin-link { color:#5B9BD5; text-decoration:none; font-weight:600; }
-    .asin-link:hover { text-decoration:underline; }
-    </style>
-    <table class="asin-table"><thead><tr>"""
+    # Display with native Streamlit dataframe — row selection enabled
+    event = st.dataframe(
+        table_df.drop(columns=['_domain']),
+        column_config={
+            "🔗 Amazon": st.column_config.LinkColumn(
+                "🔗 Amazon",
+                display_text="Відкрити →",
+            ),
+            "Rating": st.column_config.NumberColumn(
+                "⭐ Rating",
+                format="%.2f ★",
+            ),
+            "Neg %": st.column_config.NumberColumn(
+                "🔴 Neg %",
+                format="%.1f%%",
+            ),
+            "Reviews": st.column_config.NumberColumn("📝 Відгуків"),
+        },
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        height=min(400, 45 + len(table_df) * 35),
+    )
 
-    for col in rows.columns:
-        if col != '🔗 Amazon':
-            html += f"<th>{col}</th>"
-    html += "<th>🔗 Посилання</th></tr></thead><tbody>"
+    # Return selected ASIN + domain if row clicked
+    if event.selection and event.selection.rows:
+        idx = event.selection.rows[0]
+        clicked_asin   = table_df.iloc[idx]['ASIN']
+        clicked_domain = table_df.iloc[idx]['_domain']
+        return clicked_asin, clicked_domain
 
-    for _, row in rows.iterrows():
-        html += "<tr>"
-        for col in rows.columns:
-            if col == '🔗 Amazon':
-                continue
-            elif col == 'Rating':
-                style = rating_color(row[col])
-                html += f"<td style='{style}'>{row[col]:.2f}★</td>"
-            elif col == 'Neg %':
-                color = "#F44336" if row[col] > 20 else "#FFC107" if row[col] > 10 else "#4CAF50"
-                html += f"<td style='color:{color};font-weight:bold'>{row[col]:.1f}%</td>"
-            elif col == 'ASIN':
-                # ASIN itself — make it a link too
-                url = row['🔗 Amazon']
-                html += f"<td><a class='asin-link' href='{url}' target='_blank'>{row[col]}</a></td>"
-            else:
-                html += f"<td>{row[col]}</td>"
-        # Link button
-        url = row['🔗 Amazon']
-        domain_code = url.split('amazon.')[1].split('/dp/')[0]
-        flag = DOMAIN_LABELS.get(domain_code, '🌍').split(' ')[0]
-        html += f"<td><a class='asin-link' href='{url}' target='_blank'>{flag} Відкрити →</a></td>"
-        html += "</tr>"
-
-    html += "</tbody></table>"
-    st.markdown(html, unsafe_allow_html=True)
-    st.markdown("")
+    return None, None
 
 
 def show_reviews(t):
@@ -796,27 +782,40 @@ def show_reviews(t):
         selected_domains = [display_to_code[d] for d in sel_domain_display if d in display_to_code]
 
     # 2. ASIN filter — filtered by selected countries
+    # Check if user clicked a row in the table (jump override)
+    jumped_asin = st.session_state.pop('rev_asin_jump', None)
+
     df_for_asin = df_all.copy()
     if selected_domains:
         df_for_asin = df_for_asin[df_for_asin['domain'].isin(selected_domains)]
     asins = sorted(df_for_asin['asin'].dropna().unique().tolist()) if 'asin' in df_for_asin.columns else []
     asin_options = ['🌐 Всі ASINи'] + asins
-    sel_raw = st.sidebar.selectbox("📦 ASIN:", asin_options, key="rev_asin")
+
+    # If jumped from table click → preselect that ASIN
+    default_asin_idx = 0
+    if jumped_asin and jumped_asin in asins:
+        default_asin_idx = asin_options.index(jumped_asin)
+
+    sel_raw = st.sidebar.selectbox("📦 ASIN:", asin_options, index=default_asin_idx, key="rev_asin")
     selected_asin = None if sel_raw == '🌐 Всі ASINи' else sel_raw
 
     # 3. Star filter
     star_filter = st.sidebar.multiselect("⭐ Рейтинг:", [5, 4, 3, 2, 1], default=[], key="rev_stars")
 
-    # Sidebar: quick link when ASIN selected
+    # Sidebar: quick Amazon links when ASIN selected
     if selected_asin and has_domain:
         st.sidebar.markdown("---")
-        st.sidebar.markdown("**🔗 Посилання на товар:**")
-        asin_domains = df_all[df_all['asin'] == selected_asin]['domain'].dropna().unique().tolist() if has_domain else ['com']
-        for dom in sorted(asin_domains):
+        st.sidebar.markdown("**🔗 Відкрити на Amazon:**")
+        asin_domains = sorted(df_all[df_all['asin'] == selected_asin]['domain'].dropna().unique().tolist())
+        for dom in asin_domains:
             url = make_amazon_url(dom, selected_asin)
             flag = DOMAIN_LABELS.get(dom, '🌍').split(' ')[0]
             label = DOMAIN_LABELS.get(dom, dom).split('(')[0].strip()
-            st.sidebar.markdown(f"[{flag} {label}]({url})", unsafe_allow_html=False)
+            st.sidebar.markdown(f"[{flag} {label}]({url})")
+        st.sidebar.markdown("---")
+        if st.sidebar.button("← Назад до всіх ASINів", use_container_width=True):
+            st.session_state['rev_asin_jump'] = None
+            st.rerun()
 
     # ---- APPLY FILTERS ----
     df = df_all.copy()
@@ -964,7 +963,11 @@ def show_reviews(t):
     # 🔗 CLICKABLE AMAZON LINKS TABLE
     # ============================================
     if selected_asin is None:
-        show_asin_links_table(df, has_domain)
+        clicked_asin, clicked_domain = show_asin_links_table(df, has_domain)
+        # If user clicked a row → jump to that ASIN's detail view
+        if clicked_asin:
+            st.session_state['rev_asin_jump'] = clicked_asin
+            st.rerun()
         st.markdown("---")
 
     # ============================================
@@ -1573,4 +1576,4 @@ elif report_choice == "🧠 AI Forecast":              show_ai_forecast(df, t)
 elif report_choice == "📋 FBA Inventory Table":      show_data_table(df_filtered, t, selected_date)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("📦 Amazon FBA BI System v3.6 🌍")
+st.sidebar.caption("📦 Amazon FBA BI System v3.7 🌍")
