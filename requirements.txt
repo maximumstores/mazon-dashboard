@@ -7,3 +7,12 @@ scikit-learn
 python-dotenv
 SQLAlchemy
 matplotlib
+seaborn
+altair
+bokeh
+prophet
+statsmodels
+xlrd
+pyarrow
+requests
+httpx
